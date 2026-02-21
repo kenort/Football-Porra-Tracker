@@ -1,0 +1,9 @@
+{
+  "name": "champions-porra-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Porra de Champions con sincronizacion a football-data",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
