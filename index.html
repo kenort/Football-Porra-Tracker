@@ -15,271 +15,255 @@
 </head>
 
 <body>
-  <!-- Animated background blobs -->
-  <div class="bg-blobs" aria-hidden="true">
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
-    <div class="blob blob-3"></div>
-  </div>
+  <div class="app-shell">
 
-  <main class="container">
-    <!-- Header -->
-    <header class="hero">
-      <div class="hero-badge">
-        <span class="hero-badge-dot"></span>
-        Live Tracker
-      </div>
-      <h1>
-        <span class="gradient-text">Football</span> Porra Tracker
-      </h1>
-      <p>
-        Selecciona competición, carga partidos oficiales y gestiona predicciones
-        con ranking automático.
-      </p>
-    </header>
-
-    <!-- Navigation -->
-    <nav class="view-menu" role="navigation" aria-label="Secciones principales">
-      <button type="button" class="menu-btn active" data-view="partidos" id="nav-partidos">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-          <path d="M2 12h20" />
-        </svg>
-        Partidos
-      </button>
-      <button type="button" class="menu-btn" data-view="participantes" id="nav-participantes">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-          <circle cx="9" cy="7" r="4" />
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-        </svg>
-        Participantes
-      </button>
-      <button type="button" class="menu-btn" data-view="clasificacion" id="nav-clasificacion">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-        </svg>
-        Clasificación
-      </button>
-      <button type="button" class="menu-btn" data-view="tabla" id="nav-tabla">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <path d="M3 9h18M3 15h18M9 3v18" />
-        </svg>
-        Tabla posiciones
-      </button>
-    </nav>
-
-    <!-- ===== PARTIDOS PANEL ===== -->
+    <!-- ======== PARTIDOS PANEL ======== -->
     <section class="view-panel active" data-panel="partidos">
-
-      <!-- Torneo y temporada -->
-      <section class="card">
-        <div class="card-header">
-          <div class="card-icon card-icon--blue">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" />
-              <path d="M2 17l10 5 10-5" />
-              <path d="M2 12l10 5 10-5" />
-            </svg>
-          </div>
-          <h2>Torneo y temporada</h2>
-        </div>
-        <form id="sync-form" class="grid-form">
-          <label class="field-label">
-            <span class="field-title">Competición</span>
-            <select id="competition" required class="field-input"></select>
-          </label>
-
-          <label class="field-label">
-            <span class="field-title">Temporada</span>
-            <input type="number" id="season" min="2000" max="2100" required class="field-input" />
-          </label>
-
-          <button type="submit" id="sync-matches" class="btn btn-primary btn-sync">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10" />
-              <polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-            </svg>
-            Cargar partidos
-          </button>
-        </form>
-        <p id="sync-status" class="status-msg"></p>
-      </section>
-
-      <!-- Stats grid -->
-      <section class="stats-grid">
-        <article class="card stat-card">
-          <div class="stat-icon stat-icon--purple">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      <header class="app-bar">
+        <div class="app-logo">
+          <div class="app-logo-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10" />
               <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
               <path d="M2 12h20" />
             </svg>
           </div>
-          <div class="stat-body">
-            <span class="stat-label">Partidos cargados</span>
-            <p id="total-matches" class="stat-value">0</p>
-          </div>
-        </article>
-        <article class="card stat-card">
-          <div class="stat-icon stat-icon--green">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </div>
-          <div class="stat-body">
-            <span class="stat-label">Partidos finalizados</span>
-            <p id="finished-matches" class="stat-value">0</p>
-          </div>
-        </article>
-        <article class="card stat-card">
-          <div class="stat-icon stat-icon--orange">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <polygon
-                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
-          </div>
-          <div class="stat-body">
-            <span class="stat-label">Predicciones</span>
-            <p id="total-predictions" class="stat-value">0</p>
-          </div>
-        </article>
-      </section>
+          <span>Football <strong>Porra</strong></span>
+        </div>
+        <div class="live-chip">
+          <span class="live-dot"></span>LIVE
+        </div>
+      </header>
 
-      <!-- Partidos y predicciones -->
-      <section class="card">
-        <div class="card-header table-header">
-          <div style="display:flex;align-items:center;gap:0.8rem;">
-            <div class="card-icon card-icon--teal">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      <div class="app-scroll">
+        <div class="page-head">
+          <h1>Dashboard</h1>
+          <p class="page-sub">Gestiona tus torneos y estadísticas</p>
+        </div>
+
+        <!-- Hero / sync card -->
+        <div class="hero-card">
+          <div class="hero-card-img"></div>
+          <div class="hero-card-body">
+            <span class="comp-badge">Competición activa</span>
+            <form id="sync-form" class="hero-form">
+              <label class="field-label">
+                <span class="field-title">Competición</span>
+                <select id="competition" required class="field-input field-input--dark"></select>
+              </label>
+              <label class="field-label">
+                <span class="field-title">Temporada</span>
+                <input type="number" id="season" min="2000" max="2100" required class="field-input field-input--dark" />
+              </label>
+              <button type="submit" id="sync-matches" class="btn btn-cyan btn-full">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+                Cargar partidos
+              </button>
+            </form>
+            <p id="sync-status" class="status-msg"></p>
+          </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+          <article class="stat-card">
+            <div class="stat-top">
+              <div class="stat-icon stat-icon--cyan">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+              </div>
+              <span class="stat-tag">TOTAL</span>
+            </div>
+            <span class="stat-name">Partidos Cargados</span>
+            <p id="total-matches" class="stat-num">0</p>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top">
+              <div class="stat-icon stat-icon--green">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="9 12 11 14 15 10" />
+                </svg>
+              </div>
+              <span class="stat-tag">FINAL</span>
+            </div>
+            <span class="stat-name">Finalizados</span>
+            <p id="finished-matches" class="stat-num">0</p>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top">
+              <div class="stat-icon stat-icon--orange">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="2" />
+                  <path
+                    d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" />
+                </svg>
+              </div>
+              <span class="stat-tag">USER</span>
+            </div>
+            <span class="stat-name">Predicciones</span>
+            <p id="total-predictions" class="stat-num">0</p>
+          </article>
+        </div>
+
+        <!-- Quick actions -->
+        <h2 class="section-title">Próximos Pasos</h2>
+        <div class="quick-list">
+          <div class="quick-item">
+            <div class="quick-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-                <rect x="9" y="3" width="6" height="4" rx="1" />
-                <path d="M9 12h6M9 16h4" />
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
             </div>
-            <h2>Partidos y predicciones</h2>
+            <div class="quick-body">
+              <span class="quick-title">Invitar Participantes</span>
+              <span class="quick-sub">Añade amigos a tu porra privada</span>
+            </div>
+            <svg class="quick-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
           </div>
-          <button id="clear-data" class="btn btn-danger btn-sm">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <div class="quick-item">
+            <div class="quick-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </div>
+            <div class="quick-body">
+              <span class="quick-title">Configurar Reglas</span>
+              <span class="quick-sub">Puntos por marcador exacto, ganador, etc.</span>
+            </div>
+            <svg class="quick-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <!-- Partidos & predictions section -->
+        <div class="row-between">
+          <h2 class="section-title" style="margin:0">Partidos y Predicciones</h2>
+          <button id="clear-data" class="btn btn-ghost-danger btn-xs">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6l-1 14H6L5 6" />
               <path d="M10 11v6M14 11v6" />
               <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
             </svg>
-            Reset local
+            Reset
           </button>
         </div>
 
-        <!-- Filtros -->
-        <div class="filters-wrapper">
-          <form id="filters-form" class="grid-form filters-form">
-            <label class="field-label">
-              <span class="field-title">Equipo</span>
-              <div class="input-icon-wrap">
-                <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input type="text" id="team-filter" placeholder="Buscar equipo…"
-                  class="field-input field-input--icon" />
-              </div>
-            </label>
-
-            <label class="field-label">
-              <span class="field-title">Fase</span>
-              <select id="stage-filter" class="field-input">
-                <option value="">Todas</option>
-              </select>
-            </label>
-
-            <label class="field-label">
-              <span class="field-title">Desde</span>
-              <input type="date" id="date-from" class="field-input" />
-            </label>
-
-            <label class="field-label">
-              <span class="field-title">Hasta</span>
-              <input type="date" id="date-to" class="field-input" />
-            </label>
-
-            <button type="button" id="clear-filters" class="btn btn-ghost btn-sm" style="align-self:flex-end">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
+        <!-- Filters -->
+        <div class="filter-block">
+          <p class="filter-label-top">FILTROS DE BÚSQUEDA</p>
+          <form id="filters-form" class="filters-row">
+            <div class="icon-input-wrap">
+              <svg class="icon-input-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2.5" stroke-linecap="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
-              Limpiar
-            </button>
+              <input type="text" id="team-filter" placeholder="Equipo"
+                class="field-input field-input--filter field-input--padl" />
+            </div>
+            <select id="stage-filter" class="field-input field-input--filter">
+              <option value="">Fase</option>
+            </select>
+            <input type="date" id="date-from" class="field-input field-input--filter" title="Desde" />
+            <input type="date" id="date-to" class="field-input field-input--filter" title="Hasta" />
+            <button type="button" id="clear-filters" class="btn btn-ghost btn-xs">✕ Limpiar</button>
           </form>
         </div>
-
         <p id="matches-visible" class="status-msg"></p>
 
-        <!-- Predicción form -->
-        <div class="prediction-wrapper">
-          <div class="prediction-header">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        <!-- Nueva predicción -->
+        <div class="pred-card">
+          <div class="pred-card-top">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
-              <polygon
-                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
             </svg>
-            <span>Nueva predicción</span>
+            Nueva Predicción
           </div>
-          <form id="prediction-form" class="grid-form prediction-form">
+          <form id="prediction-form" class="pred-form">
             <label class="field-label">
-              <span class="field-title">Jugador</span>
-              <select id="predictionPlayer" required class="field-input"></select>
+              <span class="field-title-sm">Seleccionar Jugador</span>
+              <div class="suffix-wrap">
+                <select id="predictionPlayer" required class="field-input field-input--dark"></select>
+                <svg class="suffix-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              </div>
             </label>
-
-            <label class="field-label">
-              <span class="field-title">Partido</span>
-              <select id="predictionMatch" required class="field-input"></select>
+            <label class="field-label" style="margin-top:.75rem">
+              <span class="field-title-sm">Seleccionar Partido</span>
+              <div class="suffix-wrap">
+                <select id="predictionMatch" required class="field-input field-input--dark"></select>
+                <svg class="suffix-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+                  <path d="M2 12h20" />
+                </svg>
+              </div>
             </label>
-
-            <label class="field-label">
-              <span class="field-title">Goles local</span>
-              <input type="number" id="predictionHome" min="0" required class="field-input field-input--number" />
-            </label>
-
-            <label class="field-label">
-              <span class="field-title">Goles visitante</span>
-              <input type="number" id="predictionAway" min="0" required class="field-input field-input--number" />
-            </label>
-
-            <button type="submit" class="btn btn-primary btn-sm" style="align-self:flex-end">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            <div class="score-row">
+              <div class="score-box">
+                <span class="score-box-label">GOLES LOCAL</span>
+                <input type="number" id="predictionHome" min="0" required class="score-num" placeholder="0" />
+              </div>
+              <div class="score-box">
+                <span class="score-box-label">GOLES VISITANTE</span>
+                <input type="number" id="predictionAway" min="0" required class="score-num" placeholder="0" />
+              </div>
+            </div>
+            <button type="submit" class="btn btn-cyan btn-full" style="margin-top:1rem">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                 stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13" />
+                <polyline points="7 3 7 8 15 8" />
               </svg>
               Guardar predicción
             </button>
           </form>
         </div>
 
-        <!-- Tabla de partidos -->
+        <!-- Matches table -->
+        <h2 class="section-title" style="margin-top:1.5rem">Resultados Recientes</h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Fecha</th>
-                <th>Competición</th>
+                <th>Comp.</th>
                 <th>Fase</th>
                 <th>Partido</th>
                 <th>Resultado</th>
@@ -290,11 +274,9 @@
             <tbody id="matches-body"></tbody>
           </table>
         </div>
-
-        <!-- Paginación -->
         <div class="pagination">
           <button type="button" id="prev-page" class="btn btn-ghost btn-sm">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
               <polyline points="15 18 9 12 15 6" />
             </svg>
@@ -303,103 +285,139 @@
           <p id="page-info" class="status-msg" style="margin:0">Página 1 de 1</p>
           <button type="button" id="next-page" class="btn btn-ghost btn-sm">
             Siguiente
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
         </div>
-      </section>
+      </div><!-- end app-scroll -->
     </section>
 
-    <!-- ===== PARTICIPANTES PANEL ===== -->
+    <!-- ======== PARTICIPANTES PANEL ======== -->
     <section class="view-panel" data-panel="participantes">
-      <section class="card">
-        <div class="card-header">
-          <div class="card-icon card-icon--purple">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      <header class="app-bar">
+        <h1 class="app-bar-title">Participantes</h1>
+        <span class="liga-badge">LIGA PRO</span>
+      </header>
+      <div class="app-scroll">
+        <form id="player-form" class="search-form">
+          <div class="icon-input-wrap" style="flex:1">
+            <svg class="icon-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.5" stroke-linecap="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input type="text" id="playerName" placeholder="Buscar participante por nombre..." maxlength="40" required
+              class="field-input field-input--padl search-field" />
+          </div>
+          <button type="submit" class="btn btn-cyan fab-inline">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              <line x1="19" y1="8" x2="19" y2="14" />
+              <line x1="22" y1="11" x2="16" y2="11" />
             </svg>
-          </div>
-          <h2>Participantes</h2>
-        </div>
-        <form id="player-form" class="inline-form">
-          <div class="input-icon-wrap" style="flex:1;min-width:200px">
-            <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-            <input type="text" id="playerName" placeholder="Nombre del participante…" maxlength="40" required
-              class="field-input field-input--icon" />
-          </div>
-          <button type="submit" class="btn btn-primary">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Agregar
+            Añadir
           </button>
         </form>
+        <p class="players-label">EN LÍNEA</p>
         <div id="players-list" class="chips"></div>
-      </section>
+      </div>
     </section>
 
-    <!-- ===== CLASIFICACIÓN PANEL ===== -->
+    <!-- ======== CLASIFICACION PANEL ======== -->
     <section class="view-panel" data-panel="clasificacion">
-      <section class="card">
-        <div class="card-header">
-          <div class="card-icon card-icon--gold">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
-          </div>
-          <h2>Clasificación</h2>
+      <header class="app-bar app-bar--center">
+        <h1 class="app-bar-title">Clasificación</h1>
+        <button class="icon-btn" aria-label="Buscar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+      </header>
+      <div class="app-scroll">
+        <div class="tab-bar">
+          <span class="tab-item tab-item--active">Tabla</span>
+          <span class="tab-item">Jugadores</span>
+          <span class="tab-item">Equipos</span>
         </div>
         <div class="table-wrap">
           <table class="leaderboard-table">
             <thead>
               <tr>
-                <th>Pos</th>
-                <th>Jugador</th>
-                <th>Puntos</th>
-                <th>Aciertos exactos</th>
-                <th>Tendencias</th>
+                <th>POS</th>
+                <th>JUGADOR</th>
+                <th>PJ</th>
+                <th>V</th>
+                <th>PTS</th>
               </tr>
             </thead>
             <tbody id="leaderboard-body"></tbody>
           </table>
         </div>
-      </section>
+      </div>
     </section>
 
-    <!-- ===== TABLA POSICIONES PANEL ===== -->
+    <!-- ======== TABLA PANEL ======== -->
     <section class="view-panel" data-panel="tabla">
-      <section class="card">
-        <div class="card-header table-header">
-          <div style="display:flex;align-items:center;gap:0.8rem;">
-            <div class="card-icon card-icon--teal">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-                stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M3 9h18M3 15h18M9 3v18" />
-              </svg>
-            </div>
-            <h2>Tabla de posiciones</h2>
-          </div>
-          <p id="standings-meta" class="status-msg" style="margin:0"></p>
-        </div>
+      <header class="app-bar">
+        <h1 class="app-bar-title">Tabla de Posiciones</h1>
+        <p id="standings-meta" class="app-bar-meta"></p>
+      </header>
+      <div class="app-scroll">
         <div id="standings-container"></div>
-      </section>
+      </div>
     </section>
-  </main>
 
+    <!-- ======== BOTTOM NAV ======== -->
+    <nav class="bottom-nav">
+      <button type="button" class="menu-btn active" data-view="partidos" id="nav-partidos">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+          <path d="M2 12h20" />
+        </svg>
+        <span>Partidos</span>
+      </button>
+      <button type="button" class="menu-btn" data-view="participantes" id="nav-participantes">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+        <span>Participantes</span>
+      </button>
+      <button type="button" class="menu-btn" data-view="clasificacion" id="nav-clasificacion">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+          <path d="M4 22h16" />
+          <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+          <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+          <path d="M18 2H6v7a6 6 0 0 0 12 0V2z" />
+        </svg>
+        <span>Clasificación</span>
+      </button>
+      <button type="button" class="menu-btn" data-view="tabla" id="nav-tabla">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10" />
+          <line x1="12" y1="20" x2="12" y2="4" />
+          <line x1="6" y1="20" x2="6" y2="14" />
+        </svg>
+        <span>Posiciones</span>
+      </button>
+    </nav>
+
+  </div><!-- end app-shell -->
   <script src="app.js"></script>
 </body>
 

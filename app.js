@@ -359,6 +359,7 @@ function renderPlayers() {
   for (const player of state.players) {
     const chip = document.createElement("span");
     chip.className = "chip";
+    chip.dataset.initial = player.charAt(0).toUpperCase();
     chip.innerHTML = `${escapeHtml(player)} <button type="button" data-player="${escapeHtml(player)}">x</button>`;
     playersList.appendChild(chip);
   }
@@ -429,12 +430,12 @@ function renderMatches() {
 
     const predictionsHtml = predictions.length
       ? `<ul class="pred-list">${predictions
-          .map((p) => {
-            const pts = pointsForPrediction(p, match);
-            const suffix = pts >= 0 ? ` (${pts} pts)` : "";
-            return `<li>${escapeHtml(p.player)}: ${p.home}-${p.away}${suffix}</li>`;
-          })
-          .join("")}</ul>`
+        .map((p) => {
+          const pts = pointsForPrediction(p, match);
+          const suffix = pts >= 0 ? ` (${pts} pts)` : "";
+          return `<li>${escapeHtml(p.player)}: ${p.home}-${p.away}${suffix}</li>`;
+        })
+        .join("")}</ul>`
       : '<span class="muted">Sin predicciones</span>';
 
     row.innerHTML = `
@@ -551,8 +552,8 @@ function renderStandings() {
         </thead>
         <tbody>
           ${standing.rows
-            .map(
-              (row) => `
+        .map(
+          (row) => `
             <tr>
               <td>${row.position}</td>
               <td>${escapeHtml(row.team)}</td>
@@ -565,8 +566,8 @@ function renderStandings() {
               <td>${row.goalDifference}</td>
               <td>${row.points}</td>
             </tr>`,
-            )
-            .join("")}
+        )
+        .join("")}
         </tbody>
       </table>
     `;
@@ -692,17 +693,17 @@ function normalizeStandings(standingsList) {
     .map((entry) => {
       const rows = Array.isArray(entry?.table)
         ? entry.table.map((r) => ({
-            position: r.position ?? "-",
-            team: r.team?.shortName || r.team?.tla || r.team?.name || "Equipo",
-            playedGames: r.playedGames ?? 0,
-            won: r.won ?? 0,
-            draw: r.draw ?? 0,
-            lost: r.lost ?? 0,
-            goalsFor: r.goalsFor ?? 0,
-            goalsAgainst: r.goalsAgainst ?? 0,
-            goalDifference: r.goalDifference ?? 0,
-            points: r.points ?? 0,
-          }))
+          position: r.position ?? "-",
+          team: r.team?.shortName || r.team?.tla || r.team?.name || "Equipo",
+          playedGames: r.playedGames ?? 0,
+          won: r.won ?? 0,
+          draw: r.draw ?? 0,
+          lost: r.lost ?? 0,
+          goalsFor: r.goalsFor ?? 0,
+          goalsAgainst: r.goalsAgainst ?? 0,
+          goalDifference: r.goalDifference ?? 0,
+          points: r.points ?? 0,
+        }))
         : [];
 
       if (!rows.length) return null;
