@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Football Porra Tracker</title>
+  <meta name="description" content="Redirigiendo al sistema de porras..." />
+  <script>
+    (async function routeEntry() {
+      try {
+        const response = await fetch("/api/bootstrap", { credentials: "same-origin" });
+        const payload = await response.json();
+        const target = payload?.authenticated ? "/dashboard" : "/login";
+        window.location.replace(target);
+      } catch {
+        window.location.replace("/login");
+      }
+    }());
+  </script>
+</head>
+
+<body></body>
+
+</html>

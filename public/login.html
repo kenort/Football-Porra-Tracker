@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Acceso | Football Porra Tracker</title>
+  <meta name="description" content="Accede al sistema SaaS de porras de fútbol." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div id="boot-splash" class="boot-splash">
+    <img src="logo_porra.png" alt="Football Porra Tracker" class="boot-splash-logo" />
+    <div class="boot-splash-loader">
+      <div class="loading-spinner"></div>
+      <p class="boot-splash-sub">Cargando datos...</p>
+    </div>
+  </div>
+
+  <button id="theme-toggle" class="theme-toggle" aria-label="Cambiar tema" title="Cambiar modo día/noche">
+    <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="5" />
+      <line x1="12" y1="1" x2="12" y2="3" />
+      <line x1="12" y1="21" x2="12" y2="23" />
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+      <line x1="1" y1="12" x2="3" y2="12" />
+      <line x1="21" y1="12" x2="23" y2="12" />
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+    </svg>
+    <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  </button>
+
+  <section class="auth-shell auth-shell--single">
+    <div class="auth-card">
+      <div id="setup-block" hidden>
+        <span class="section-title">Configuración inicial</span>
+        <p class="page-sub">Crea el primer superadmin del sistema. Solo ocurre una vez.</p>
+        <form id="setup-form" class="pred-form auth-form">
+          <label class="field-label">
+            <span class="field-title">Nombre</span>
+            <input id="setup-name" class="field-input field-input--dark" required />
+          </label>
+          <label class="field-label">
+            <span class="field-title">Correo</span>
+            <input id="setup-email" type="email" class="field-input field-input--dark" required />
+          </label>
+          <label class="field-label">
+            <span class="field-title">Contraseña</span>
+            <div class="password-wrap">
+              <input id="setup-password" type="password" class="field-input field-input--dark" minlength="8" required />
+              <button type="button" class="password-toggle" data-toggle-password="setup-password">Ver</button>
+            </div>
+          </label>
+          <button type="submit" class="btn btn-cyan btn-full">Crear superadmin</button>
+          <p id="setup-status" class="status-msg"></p>
+        </form>
+      </div>
+
+      <div id="login-block" hidden>
+        <span class="section-title">Iniciar sesión</span>
+        <p class="page-sub">Inicia sesión para acceder a tu organización y a tus ligas autorizadas.</p>
+        <form id="login-form" class="pred-form auth-form">
+          <label class="field-label">
+            <span class="field-title">Correo</span>
+            <input id="login-email" type="email" class="field-input field-input--dark" required />
+          </label>
+          <label class="field-label">
+            <span class="field-title">Contraseña</span>
+            <div class="password-wrap">
+              <input id="login-password" type="password" class="field-input field-input--dark" required />
+              <button type="button" class="password-toggle" data-toggle-password="login-password">Ver</button>
+            </div>
+          </label>
+          <button type="submit" class="btn btn-cyan btn-full">Entrar</button>
+          <p id="login-status" class="status-msg"></p>
+        </form>
+        <button id="forgot-password-trigger" type="button" class="btn btn-ghost btn-full">Se me olvidó la contraseña</button>
+      </div>
+
+      <div id="forgot-block" hidden>
+        <span class="section-title">Recuperar contraseña</span>
+        <p class="page-sub">Registra tu solicitud y tu administrador podrá emitir una contraseña temporal.</p>
+        <form id="forgot-form" class="pred-form auth-form">
+          <label class="field-label">
+            <span class="field-title">Correo</span>
+            <input id="forgot-email" type="email" class="field-input field-input--dark" required />
+          </label>
+          <button type="submit" class="btn btn-cyan btn-full">Solicitar recuperación</button>
+          <p id="forgot-status" class="status-msg"></p>
+        </form>
+        <button id="forgot-back" type="button" class="btn btn-ghost btn-full">Volver al login</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="theme.js"></script>
+  <script src="auth.js"></script>
+</body>
+
+</html>
