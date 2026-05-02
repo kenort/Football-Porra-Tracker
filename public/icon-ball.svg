@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#23C4FF"/>
+      <stop offset="1" stop-color="#FF8748"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0" cy="0" r="1" gradientTransform="translate(176 156) rotate(53.13) scale(308.99)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="120" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="120" fill="url(#shine)"/>
+  <circle cx="256" cy="256" r="144" fill="#F8FBFF"/>
+  <g fill="#11243F">
+    <path d="M256 170 290 194 277 235h-42l-13-41 34-24Z"/>
+    <path d="M207 210l-36 11-22 34 21 34 35 11 23-31-21-59Z"/>
+    <path d="M305 210l36 11 22 34-21 34-35 11-23-31 21-59Z"/>
+    <path d="M221 314l35-22 35 22-12 40h-46l-12-40Z"/>
+    <path d="M184 175c20-18 42-29 68-35l-40 29-5 35-23 7v-36Z"/>
+    <path d="M328 175c-20-18-42-29-68-35l40 29 5 35 23 7v-36Z"/>
+    <path d="M171 303c11 23 27 43 47 58l-13-44-30-9-4-5Z"/>
+    <path d="M341 303c-11 23-27 43-47 58l13-44 30-9 4-5Z"/>
+  </g>
+  <circle cx="256" cy="256" r="144" stroke="rgba(17,36,63,.14)" stroke-width="10"/>
+</svg>

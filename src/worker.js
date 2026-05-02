@@ -1,9 +1,16 @@
 const API_BASE = "https://api.football-data.org/v4";
 const SESSION_COOKIE = "porra_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
+const SESSION_TOUCH_INTERVAL_MS = 1000 * 60 * 10;
 const PASSWORD_ITERATIONS = 100_000;
 const PASSWORD_KEY_LENGTH = 256;
 const OPEN_PREDICTION_STATUSES = new Set(["SCHEDULED", "TIMED"]);
+const BOOTSTRAP_CACHE_TTL_SECONDS = 60;
+const COMPETITIONS_CACHE_TTL_SECONDS = 60 * 60;
+const TEAM_ASSETS_CACHE_TTL_SECONDS = 60 * 60;
+const STATIC_HTML_CACHE_CONTROL = "public, max-age=0, s-maxage=300, stale-while-revalidate=30";
+const STATIC_ASSET_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
+const GLOBAL_CACHE_VERSION_KEY = "version:global";
 const FALLBACK_COMPETITIONS = [
   { id: 2000, code: "WC", name: "FIFA World Cup" },
   { id: 2001, code: "CL", name: "UEFA Champions League" },
@@ -22,7 +29,7 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
-      const isSecureRequest = url.protocol === "https:";
+      const isSecureRequest = shouldUseSecureCookie(url);
       const setupRequired = !(await hasAnySuperadmin(env.DB));
       const session = setupRequired ? null : await getSessionContext(request, env.DB);
 
@@ -31,27 +38,39 @@ export default {
           return Response.redirect(new URL(session?.user ? "/dashboard" : "/login", url), 302);
         }
 
-        if (url.pathname === "/login.html") {
-          return Response.redirect(new URL("/login", url), 302);
+        if (url.pathname === "/login" || url.pathname === "/login.html") {
+          return serveStaticAsset(request, env, "/login.html");
         }
 
-        if (url.pathname === "/dashboard.html") {
-          return Response.redirect(new URL("/dashboard", url), 302);
+        if (url.pathname === "/dashboard" || url.pathname === "/dashboard.html") {
+          return serveStaticAsset(request, env, "/dashboard.html");
         }
 
-        if (url.pathname === "/login" && session?.user) {
-          return Response.redirect(new URL("/dashboard", url), 302);
-        }
-
-        if (url.pathname === "/dashboard" && !session?.user) {
-          return Response.redirect(new URL("/login", url), 302);
-        }
-
-        return env.ASSETS.fetch(request);
+        return serveStaticAsset(request, env);
       }
 
       if (request.method === "GET" && url.pathname === "/api/setup/status") {
         return jsonResponse({ setupRequired });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/competitions") {
+        return respondWithPublicApiCache(request, env, "competitions", COMPETITIONS_CACHE_TTL_SECONDS, async () =>
+          jsonResponse(
+            { competitions: await getCompetitions(env) },
+            200,
+            { "cache-control": `public, max-age=${COMPETITIONS_CACHE_TTL_SECONDS}` },
+          ));
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/api/media/flag/")) {
+        const flagCode = decodeURIComponent(url.pathname.slice("/api/media/flag/".length));
+        return serveFlagAsset(env, flagCode);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/media/team-crest") {
+        const leagueId = url.searchParams.get("leagueId") || "";
+        const teamKey = url.searchParams.get("team") || "";
+        return serveTeamCrestAsset(env, leagueId, teamKey);
       }
 
       if (request.method === "POST" && url.pathname === "/api/setup/superadmin") {
@@ -69,6 +88,7 @@ export default {
           entityLabel: user.email,
           details: { email: user.email },
         });
+        await bumpGlobalCacheVersion(env);
         const sessionToken = await createSession(env.DB, user.id);
         return jsonResponse(
           { ok: true, user: sanitizeViewer(user) },
@@ -140,10 +160,17 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
-        return jsonResponse(await buildBootstrap(env, session, setupRequired, url.searchParams.get("leagueId")));
+        return jsonResponse(
+          await buildBootstrapWithCache(env, session, setupRequired, url.searchParams.get("leagueId")),
+        );
       }
 
       if (!session?.user) throw httpError("Debes iniciar sesión.", 401);
+
+      if (request.method === "GET" && url.pathname.startsWith("/api/leagues/") && url.pathname.endsWith("/team-assets")) {
+        const leagueId = decodeURIComponent(url.pathname.slice("/api/leagues/".length, -"/team-assets".length));
+        return jsonResponse(await getLeagueTeamAssets(env, session.user, leagueId));
+      }
 
       if (request.method === "PATCH" && url.pathname === "/api/auth/profile") {
         const payload = await readJson(request);
@@ -159,6 +186,7 @@ export default {
           entityLabel: user.email,
           details: { email: user.email, displayName: user.displayName },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ ok: true, user: sanitizeViewer(user) });
       }
 
@@ -176,17 +204,16 @@ export default {
           entityLabel: user.email,
           details: {},
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ ok: true, user: sanitizeViewer(user) });
-      }
-
-      if (request.method === "GET" && url.pathname === "/api/competitions") {
-        return jsonResponse({ competitions: await getCompetitions(env) });
       }
 
       if (request.method === "POST" && url.pathname === "/api/league/predictions") {
         requireRole(session.user, ["user"]);
         const payload = await readJson(request);
-        const prediction = await upsertLeaguePrediction(env.DB, session.user, payload);
+        const prediction = isPredictionQueueEnabled(env)
+          ? await enqueueLeaguePrediction(env, session.user, payload)
+          : await upsertLeaguePrediction(env.DB, session.user, payload);
         await createAuditLog(env.DB, {
           organizationId: session.user.organizationId,
           actorUserId: session.user.id,
@@ -202,13 +229,15 @@ export default {
             awayGoals: payload?.awayGoals,
           },
         });
-        return jsonResponse({ prediction }, 201);
+        await bumpLeagueCacheVersion(env, prediction.leagueId);
+        await bumpGlobalCacheVersion(env);
+        return jsonResponse({ prediction, queued: isPredictionQueueEnabled(env) }, isPredictionQueueEnabled(env) ? 202 : 201);
       }
 
       if (request.method === "DELETE" && url.pathname.startsWith("/api/league/predictions/")) {
         requireRole(session.user, ["user"]);
         const predictionId = decodeURIComponent(url.pathname.slice("/api/league/predictions/".length));
-        await deleteLeaguePrediction(env.DB, session.user, predictionId);
+        const deleted = await deleteLeaguePrediction(env.DB, session.user, predictionId);
         await createAuditLog(env.DB, {
           organizationId: session.user.organizationId,
           actorUserId: session.user.id,
@@ -220,12 +249,70 @@ export default {
           entityLabel: predictionId,
           details: {},
         });
+        await bumpLeagueCacheVersion(env, deleted.leagueId);
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ ok: true });
       }
 
       if (request.method === "GET" && url.pathname === "/api/admin/users") {
         requireRole(session.user, ["superadmin", "admin"]);
         return jsonResponse({ users: await getManageableUsers(env.DB, session.user) });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/admin/users/import-template") {
+        requireRole(session.user, ["admin"]);
+        return textResponse(await buildUserImportTemplate(env.DB, session.user), 200, {
+          "content-type": "text/csv; charset=utf-8",
+          "cache-control": "no-store",
+        });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/admin/users/import-preview") {
+        requireRole(session.user, ["admin"]);
+        const payload = await readJson(request);
+        const preview = await buildUserImportPreview(env.DB, session.user, payload?.csvText);
+        return jsonResponse(preview);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/admin/users/import-commit") {
+        requireRole(session.user, ["admin"]);
+        const payload = await readJson(request);
+        const result = await commitUserImport(env.DB, session.user, payload?.csvText);
+        for (const createdUser of result.createdUsers) {
+          await createAuditLog(env.DB, {
+            organizationId: session.user.organizationId,
+            actorUserId: session.user.id,
+            actorRole: session.user.role,
+            actorDisplayName: session.user.displayName,
+            actionType: "user_created",
+            entityType: "user",
+            entityId: createdUser.id,
+            entityLabel: createdUser.email,
+            details: {
+              role: "user",
+              displayName: createdUser.displayName,
+              source: "bulk_import",
+              leagues: createdUser.leagues.join(", "),
+            },
+          });
+        }
+        await createAuditLog(env.DB, {
+          organizationId: session.user.organizationId,
+          actorUserId: session.user.id,
+          actorRole: session.user.role,
+          actorDisplayName: session.user.displayName,
+          actionType: "users_imported_bulk",
+          entityType: "user",
+          entityId: null,
+          entityLabel: "bulk-import",
+          details: {
+            created: result.summary.created,
+            skipped: result.summary.skipped,
+            errors: result.summary.errors,
+          },
+        });
+        await bumpGlobalCacheVersion(env);
+        return jsonResponse(result, 201);
       }
 
       if (request.method === "GET" && url.pathname === "/api/admin/password-reset-requests") {
@@ -250,6 +337,7 @@ export default {
           entityLabel: user.email,
           details: { role: user.role, displayName: user.displayName },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ user }, 201);
       }
 
@@ -271,6 +359,7 @@ export default {
           entityLabel: user.email,
           details: { role: user.role, displayName: user.displayName },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ user });
       }
 
@@ -291,6 +380,7 @@ export default {
             deletedUsers: result.deletedUsers?.join(" | ") || "",
           },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
       }
 
@@ -315,6 +405,7 @@ export default {
             leagues: result.leagueNames?.join(", ") || "Sin ligas",
           },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
       }
 
@@ -333,6 +424,8 @@ export default {
           entityLabel: league.name,
           details: { competitionCode: league.competitionCode, season: league.season },
         });
+        await bumpGlobalCacheVersion(env);
+        await bumpLeagueCacheVersion(env, league.id);
         return jsonResponse({ league }, 201);
       }
 
@@ -352,6 +445,8 @@ export default {
           entityLabel: league.name,
           details: { competitionCode: league.competitionCode, season: league.season },
         });
+        await bumpGlobalCacheVersion(env);
+        await bumpLeagueCacheVersion(env, league.id);
         return jsonResponse({ league });
       }
 
@@ -372,6 +467,7 @@ export default {
             deletedLeagues: result.deletedLeagues?.join(" | ") || "",
           },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
       }
 
@@ -396,6 +492,8 @@ export default {
             isActive: result.isActive,
           },
         });
+        await bumpGlobalCacheVersion(env);
+        await bumpLeagueCacheVersion(env, result.leagueId);
         return jsonResponse(result);
       }
 
@@ -420,6 +518,7 @@ export default {
             deletedEndUsers: result.deletedEndUsers,
           },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
       }
 
@@ -439,6 +538,7 @@ export default {
           entityLabel: organization.name,
           details: { isActive: organization.isActive },
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse({ organization });
       }
 
@@ -464,6 +564,8 @@ export default {
           entityLabel: result.leagueId,
           details: { matchesCount: result.matchesCount, standingsCount: result.standingsCount },
         });
+        await bumpGlobalCacheVersion(env);
+        await bumpLeagueCacheVersion(env, result.leagueId);
         return jsonResponse(result);
       }
 
@@ -486,6 +588,7 @@ export default {
           entityLabel: requestId,
           details: {},
         });
+        await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
       }
 
@@ -497,6 +600,22 @@ export default {
 
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(runScheduledLeagueSync(controller, env));
+  },
+
+  async queue(batch, env, ctx) {
+    for (const message of batch.messages) {
+      try {
+        if (message.body?.type === "prediction_upsert") {
+          await persistQueuedPrediction(env.DB, message.body);
+          await bumpLeagueCacheVersion(env, message.body.leagueId);
+          await bumpGlobalCacheVersion(env);
+        }
+        message.ack();
+      } catch (error) {
+        console.error("[queue] Error procesando mensaje", error);
+        message.retry();
+      }
+    }
   },
 };
 
@@ -574,17 +693,79 @@ async function buildBootstrap(env, session, setupRequired, requestedLeagueId) {
   };
 }
 
+async function buildBootstrapWithCache(env, session, setupRequired, requestedLeagueId) {
+  if (setupRequired || !session?.user || !env.APP_CACHE) {
+    return buildBootstrap(env, session, setupRequired, requestedLeagueId);
+  }
+
+  const cacheKey = await buildBootstrapCacheKey(env, session.user, requestedLeagueId);
+  const cached = await cacheGetJson(env.APP_CACHE, cacheKey);
+  if (cached) return cached;
+
+  const payload = await buildBootstrap(env, session, setupRequired, requestedLeagueId);
+  await cachePutJson(env.APP_CACHE, cacheKey, payload, BOOTSTRAP_CACHE_TTL_SECONDS);
+  return payload;
+}
+
+async function buildBootstrapCacheKey(env, viewer, requestedLeagueId) {
+  const globalVersion = await getCacheVersion(env, GLOBAL_CACHE_VERSION_KEY);
+  if (viewer.role === "superadmin") {
+    return `bootstrap:superadmin:${viewer.id}:v:${globalVersion}`;
+  }
+  const selectedLeagueId = requestedLeagueId || "default";
+  const leagueVersion = requestedLeagueId ? await getCacheVersion(env, getLeagueVersionKey(requestedLeagueId)) : "0";
+  return `bootstrap:${viewer.role}:${viewer.id}:league:${selectedLeagueId}:gv:${globalVersion}:lv:${leagueVersion}`;
+}
+
+async function serveStaticAsset(request, env, assetPath = null) {
+  const url = new URL(request.url);
+  const targetPath = assetPath || url.pathname;
+  const assetRequest = assetPath
+    ? new Request(new URL(assetPath, url), request)
+    : request;
+  const response = await env.ASSETS.fetch(assetRequest);
+  const headers = new Headers(response.headers);
+  const pathname = targetPath.toLowerCase();
+  const isHtml = pathname.endsWith(".html") || pathname === "/login" || pathname === "/dashboard";
+  headers.set("cache-control", isHtml ? STATIC_HTML_CACHE_CONTROL : STATIC_ASSET_CACHE_CONTROL);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function respondWithPublicApiCache(request, env, cacheKey, ttlSeconds, factory) {
+  const cache = caches.default;
+  const cacheUrl = new URL(request.url);
+  cacheUrl.searchParams.set("__edge_cache", cacheKey);
+  const cacheRequest = new Request(cacheUrl.toString(), request);
+  const cached = await cache.match(cacheRequest);
+  if (cached) return cached;
+
+  const response = await factory();
+  if (response.ok) {
+    const headers = new Headers(response.headers);
+    if (!headers.has("cache-control")) {
+      headers.set("cache-control", `public, max-age=${ttlSeconds}`);
+    }
+    const cacheable = new Response(response.clone().body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+    await cache.put(cacheRequest, cacheable.clone());
+    return cacheable;
+  }
+  return response;
+}
+
 async function getLeagueDashboard(db, viewer, leagueId) {
   const league = await getLeagueById(db, leagueId);
   if (!league) throw httpError("Liga no encontrada.", 404);
   await ensureLeagueAccess(db, viewer, leagueId);
 
-  const [matches, standings, predictions, members] = await Promise.all([
-    getLeagueMatches(db, leagueId),
-    getLeagueStandings(db, leagueId),
-    getLeaguePredictions(db, leagueId),
-    getLeagueUsers(db, leagueId),
-  ]);
+  const { matches, standings, predictions, members } = await getLeagueDashboardPayload(db, league);
 
   const decoratedMatches = matches.map((match) => decorateMatch(match, league));
   const predictionsWithPoints = predictions.map((prediction) => {
@@ -607,6 +788,53 @@ async function getLeagueDashboard(db, viewer, leagueId) {
     predictions: visiblePredictions,
     leaderboard: buildLeaderboard(members, decoratedMatches, predictionsWithPoints, league),
     members,
+  };
+}
+
+async function getLeagueDashboardPayload(db, league) {
+  const responses = await db.batch([
+    db.prepare(
+      `SELECT shared_matches.*, ?1 AS league_id
+         FROM shared_matches
+        WHERE competition_code = ?2 AND season = ?3
+        ORDER BY utc_date ASC`,
+    ).bind(league.id, league.competitionCode, league.season),
+    db.prepare(
+      `SELECT *
+         FROM shared_standings
+        WHERE competition_code = ?1 AND season = ?2
+        ORDER BY sort_order ASC`,
+    ).bind(league.competitionCode, league.season),
+    db.prepare(
+      `SELECT league_predictions.id,
+              league_predictions.user_id AS userId,
+              league_predictions.league_id AS leagueId,
+              users.display_name AS displayName,
+              users.email AS email,
+              league_predictions.match_id AS matchId,
+              league_predictions.home_goals AS homeGoals,
+              league_predictions.away_goals AS awayGoals,
+              league_predictions.created_at AS createdAt,
+              league_predictions.updated_at AS updatedAt
+         FROM league_predictions
+         JOIN users ON users.id = league_predictions.user_id
+        WHERE league_predictions.league_id = ?1
+        ORDER BY league_predictions.updated_at DESC`,
+    ).bind(league.id),
+    db.prepare(
+      `SELECT users.id, users.display_name, users.email, users.role, users.is_active
+         FROM users
+         JOIN league_memberships ON league_memberships.user_id = users.id
+        WHERE league_memberships.league_id = ?1 AND users.is_active = 1
+        ORDER BY users.display_name ASC`,
+    ).bind(league.id),
+  ]);
+
+  return {
+    matches: mapLeagueMatches((responses[0]?.results || [])),
+    standings: mapLeagueStandings((responses[1]?.results || [])),
+    predictions: mapLeaguePredictions((responses[2]?.results || [])),
+    members: mapLeagueUsers((responses[3]?.results || [])),
   };
 }
 
@@ -769,7 +997,7 @@ async function getSessionContext(request, db) {
   if (!token) return null;
 
   const row = await db.prepare(
-    `SELECT sessions.id AS session_id, sessions.expires_at, users.*
+    `SELECT sessions.id AS session_id, sessions.expires_at, sessions.last_seen_at, users.*
        FROM sessions
        JOIN users ON users.id = sessions.user_id
       WHERE sessions.id = ?1`,
@@ -783,9 +1011,12 @@ async function getSessionContext(request, db) {
     return null;
   }
 
-  await db.prepare("UPDATE sessions SET last_seen_at = ?2 WHERE id = ?1")
-    .bind(token, new Date().toISOString())
-    .run();
+  const lastSeenAt = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+  if (!lastSeenAt || Date.now() - lastSeenAt >= SESSION_TOUCH_INTERVAL_MS) {
+    await db.prepare("UPDATE sessions SET last_seen_at = ?2 WHERE id = ?1")
+      .bind(token, new Date().toISOString())
+      .run();
+  }
 
   return {
     sessionId: token,
@@ -883,6 +1114,195 @@ async function createTenantUser(db, adminUser, payload) {
 
   await executeBatches(db, statements, 25);
   return getUserById(db, id);
+}
+
+async function buildUserImportTemplate(db, adminUser) {
+  const leagues = await getTenantLeagues(db, adminUser.organizationId, false);
+  if (!leagues.length) {
+    throw httpError("Primero crea al menos una liga para descargar la plantilla de carga masiva.", 400);
+  }
+  const sampleLeagues = leagues.slice(0, 2).map((league) => league.name).join(" | ");
+  return [
+    "nombre,email,ligas,activo",
+    `"Ana Pérez","ana@example.com","${sampleLeagues}","si"`,
+    `"Luis Gómez","luis@example.com","${leagues[0].name}","no"`,
+  ].join("\n");
+}
+
+async function buildUserImportPreview(db, adminUser, csvText) {
+  requireRole(adminUser, ["admin"]);
+  const rows = parseUserImportCsv(csvText);
+  if (!rows.length) throw httpError("La plantilla no contiene filas de usuarios.", 400);
+  if (rows.length > 2000) throw httpError("La carga masiva admite máximo 2000 filas por archivo.", 400);
+
+  const leagues = await getTenantLeagues(db, adminUser.organizationId, false);
+  if (!leagues.length) {
+    throw httpError("Primero crea al menos una liga para validar o importar usuarios.", 400);
+  }
+  const leagueMap = new Map();
+  leagues.forEach((league) => {
+    [league.name, league.slug, league.competitionCode].forEach((alias) => {
+      const key = normalizeLookupKey(alias);
+      if (key && !leagueMap.has(key)) {
+        leagueMap.set(key, league);
+      }
+    });
+  });
+
+  const emails = rows
+    .map((row) => normalizeImportEmail(row.email))
+    .filter(Boolean);
+  const existingEmails = await getExistingEmails(db, emails);
+  const seenEmails = new Set();
+
+  const previewRows = rows.map((row) => {
+    const messages = [];
+    const displayName = String(row.nombre || "").trim();
+    const email = normalizeImportEmail(row.email);
+    const requestedLeagues = splitImportLeagues(row.ligas);
+    const resolvedLeagues = [];
+    let status = "valid";
+
+    if (!displayName) {
+      status = "error";
+      messages.push("Falta el nombre.");
+    }
+
+    if (!email) {
+      status = "error";
+      messages.push("Correo inválido.");
+    }
+
+    if (email && seenEmails.has(email)) {
+      status = "error";
+      messages.push("Correo duplicado dentro del archivo.");
+    }
+    if (email) seenEmails.add(email);
+
+    if (email && existingEmails.has(email)) {
+      status = "conflict";
+      messages.push("Ese correo ya existe en el sistema.");
+    }
+
+    if (!requestedLeagues.length) {
+      status = "error";
+      messages.push("Debes asignar al menos una liga.");
+    }
+
+    requestedLeagues.forEach((leagueName) => {
+      const league = leagueMap.get(normalizeLookupKey(leagueName));
+      if (!league) {
+        status = "error";
+        messages.push(`Liga no encontrada: ${leagueName}`);
+        return;
+      }
+      if (!resolvedLeagues.some((entry) => entry.id === league.id)) {
+        resolvedLeagues.push(league);
+      }
+    });
+
+    const isActive = parseImportActiveFlag(row.activo);
+
+    return {
+      lineNumber: row.__lineNumber,
+      displayName,
+      email: email || String(row.email || "").trim(),
+      leagues: resolvedLeagues.map((league) => league.name),
+      leagueIds: resolvedLeagues.map((league) => league.id),
+      isActive,
+      status,
+      messages: messages.length ? messages : [status === "valid" ? "Listo para crear." : "Se omitirá en la importación."],
+    };
+  });
+
+  return {
+    rows: previewRows,
+    summary: {
+      total: previewRows.length,
+      valid: previewRows.filter((row) => row.status === "valid").length,
+      conflicts: previewRows.filter((row) => row.status === "conflict").length,
+      errors: previewRows.filter((row) => row.status === "error").length,
+    },
+  };
+}
+
+async function commitUserImport(db, adminUser, csvText) {
+  const preview = await buildUserImportPreview(db, adminUser, csvText);
+  const validRows = preview.rows.filter((row) => row.status === "valid");
+  if (!validRows.length) {
+    throw httpError("No hay filas válidas para importar.", 400);
+  }
+
+  const createdUsers = [];
+  const reportRows = [];
+  const allStatements = [];
+
+  for (const row of preview.rows) {
+    if (row.status !== "valid") {
+      reportRows.push({
+        ...row,
+        finalStatus: row.status === "conflict" ? "skipped" : "error",
+        temporaryPassword: "",
+      });
+      continue;
+    }
+
+    const password = generateTemporaryPassword();
+    const hash = await hashPassword(password);
+    const now = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const statements = [
+      db.prepare(
+        `INSERT INTO users (
+           id, email, email_normalized, display_name, password_hash, password_salt, role, is_active, organization_id, must_change_password, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'user', ?7, ?8, 1, ?9, ?9)`,
+      ).bind(userId, row.email, row.email, row.displayName, hash.hash, hash.salt, row.isActive ? 1 : 0, adminUser.organizationId, now),
+    ];
+
+    row.leagueIds.forEach((leagueId) => {
+      statements.push(
+        db.prepare(
+          "INSERT INTO league_memberships (user_id, league_id, created_at) VALUES (?1, ?2, ?3)",
+        ).bind(userId, leagueId, now),
+      );
+    });
+
+    allStatements.push(...statements);
+    createdUsers.push({
+      id: userId,
+      displayName: row.displayName,
+      email: row.email,
+      leagues: row.leagues,
+    });
+    reportRows.push({
+      ...row,
+      finalStatus: "created",
+      temporaryPassword: password,
+    });
+  }
+
+  await executeBatches(db, allStatements, 75);
+
+  const reportCsv = buildUserImportReportCsv(reportRows);
+  return {
+    rows: reportRows.map((row) => ({
+      lineNumber: row.lineNumber,
+      displayName: row.displayName,
+      email: row.email,
+      leagues: row.leagues,
+      status: row.finalStatus,
+      messages: row.messages,
+      temporaryPassword: row.temporaryPassword,
+    })),
+    createdUsers,
+    reportCsv,
+    summary: {
+      total: reportRows.length,
+      created: reportRows.filter((row) => row.finalStatus === "created").length,
+      skipped: reportRows.filter((row) => row.finalStatus === "skipped").length,
+      errors: reportRows.filter((row) => row.finalStatus === "error").length,
+    },
+  };
 }
 
 async function updateAdminUser(db, actingUser, userId, payload) {
@@ -1165,6 +1585,14 @@ async function syncLeague(env, adminUser, leagueId) {
 }
 
 async function syncExistingLeague(env, league, competitionsCatalog = null) {
+  const result = await syncCompetitionSeason(env, league, competitionsCatalog);
+  await env.DB.prepare(
+    "UPDATE leagues SET competition_id = ?2, competition_name = ?3, last_sync_at = ?4, updated_at = ?4 WHERE id = ?1",
+  ).bind(league.id, result.competitionId, result.competitionName, result.syncedAt).run();
+  return { ...result, leagueId: league.id };
+}
+
+async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
   if (!env.FOOTBALL_DATA_API_TOKEN) throw httpError("Falta FOOTBALL_DATA_API_TOKEN.", 400);
 
   const competitions = competitionsCatalog || await getCompetitions(env);
@@ -1193,31 +1621,32 @@ async function syncExistingLeague(env, league, competitionsCatalog = null) {
     .filter(Boolean);
   const standings = normalizeStandings(
     Array.isArray(standingsPayload?.standings) ? standingsPayload.standings : [],
-    league.id,
+    league.competitionCode,
+    competitionName,
+    league.season,
     syncedAt,
   );
 
-  const existingRows = await env.DB.prepare("SELECT id FROM league_matches WHERE league_id = ?1").bind(league.id).all();
+  const existingRows = await env.DB.prepare(
+    "SELECT id FROM shared_matches WHERE competition_code = ?1 AND season = ?2",
+  ).bind(league.competitionCode, league.season).all();
   const existingIds = new Set((existingRows.results || []).map((row) => row.id));
   const nextIds = new Set(matches.map((match) => match.id));
   const idsToDelete = [...existingIds].filter((id) => !nextIds.has(id));
 
   const statements = [
-    env.DB.prepare(
-      "UPDATE leagues SET competition_id = ?2, competition_name = ?3, last_sync_at = ?4, updated_at = ?4 WHERE id = ?1",
-    ).bind(league.id, competitionId, competitionName, syncedAt),
-    env.DB.prepare("DELETE FROM league_standings WHERE league_id = ?1").bind(league.id),
+    env.DB.prepare("DELETE FROM shared_standings WHERE competition_code = ?1 AND season = ?2")
+      .bind(league.competitionCode, league.season),
   ];
 
   matches.forEach((match) => {
     statements.push(
       env.DB.prepare(
-        `INSERT INTO league_matches (
-           id, league_id, source_match_id, competition_code, competition_name, season, utc_date, stage,
+        `INSERT INTO shared_matches (
+           id, source_match_id, competition_code, competition_name, season, utc_date, stage,
            status, home_team, away_team, score_home, score_away, matchday, last_synced_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(id) DO UPDATE SET
-           league_id = excluded.league_id,
            source_match_id = excluded.source_match_id,
            competition_code = excluded.competition_code,
            competition_name = excluded.competition_name,
@@ -1233,7 +1662,6 @@ async function syncExistingLeague(env, league, competitionsCatalog = null) {
            last_synced_at = excluded.last_synced_at`,
       ).bind(
         match.id,
-        match.leagueId,
         match.sourceMatchId,
         match.competitionCode,
         match.competitionName,
@@ -1254,18 +1682,237 @@ async function syncExistingLeague(env, league, competitionsCatalog = null) {
   standings.forEach((standing, index) => {
     statements.push(
       env.DB.prepare(
-        "INSERT INTO league_standings (league_id, label, sort_order, rows_json, last_synced_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-      ).bind(league.id, standing.label, index, JSON.stringify(standing.rows), standing.lastSyncedAt),
+        `INSERT INTO shared_standings (
+           id, competition_code, competition_name, season, label, sort_order, rows_json, last_synced_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      ).bind(
+        `standing:${league.competitionCode}:${league.season}:${index}`,
+        league.competitionCode,
+        competitionName,
+        league.season,
+        standing.label,
+        index,
+        JSON.stringify(standing.rows),
+        standing.lastSyncedAt,
+      ),
     );
   });
 
   idsToDelete.forEach((matchId) => {
     statements.push(env.DB.prepare("DELETE FROM league_predictions WHERE match_id = ?1").bind(matchId));
-    statements.push(env.DB.prepare("DELETE FROM league_matches WHERE id = ?1").bind(matchId));
+    statements.push(env.DB.prepare("DELETE FROM shared_matches WHERE id = ?1").bind(matchId));
   });
 
   await executeBatches(env.DB, statements, 40);
-  return { ok: true, leagueId: league.id, matchesCount: matches.length, standingsCount: standings.length, syncedAt };
+  return {
+    ok: true,
+    competitionCode: league.competitionCode,
+    competitionId,
+    competitionName,
+    season: league.season,
+    matchesCount: matches.length,
+    standingsCount: standings.length,
+    syncedAt,
+  };
+}
+
+async function getLeagueTeamAssets(env, viewer, leagueId) {
+  const league = await getLeagueById(env.DB, leagueId);
+  if (!league) throw httpError("Liga no encontrada.", 404);
+  await ensureLeagueAccess(env.DB, viewer, leagueId);
+  return getLeagueTeamAssetsData(env, league);
+}
+
+async function getLeagueTeamAssetsData(env, league, options = {}) {
+  if (!env.FOOTBALL_DATA_API_TOKEN) return { assets: {}, matchGroups: {} };
+  const bypassCache = Boolean(options?.bypassCache);
+
+  const leagueVersion = await getCacheVersion(env, getLeagueVersionKey(league.id));
+  const cacheKey = `team-assets:${league.id}:v:${leagueVersion}`;
+  if (env.APP_CACHE && !bypassCache) {
+    const cached = await cacheGetJson(env.APP_CACHE, cacheKey);
+    if (cached) return cached;
+  }
+
+  const candidateKeys = [league.competitionId, league.competitionCode].filter(Boolean);
+  const [matchesPayload, teamsPayload] = await Promise.all([
+    fetchCompetitionResource(
+      env.FOOTBALL_DATA_API_TOKEN,
+      candidateKeys,
+      "matches",
+      league.season,
+      true,
+    ),
+    fetchCompetitionResource(
+      env.FOOTBALL_DATA_API_TOKEN,
+      candidateKeys,
+      "teams",
+      league.season,
+      true,
+    ),
+  ]);
+
+  const matches = Array.isArray(matchesPayload?.matches) ? matchesPayload.matches : [];
+  const teams = Array.isArray(teamsPayload?.teams) ? teamsPayload.teams : [];
+  const result = {
+    assets: buildTeamAssetsMap(matches, league.id, teams),
+    matchGroups: buildMatchGroupsMap(matches),
+  };
+  if (env.APP_CACHE) {
+    await cachePutJson(env.APP_CACHE, cacheKey, result, TEAM_ASSETS_CACHE_TTL_SECONDS);
+  }
+  return result;
+}
+
+function buildTeamAssetsMap(matches, leagueId, teams = []) {
+  const assets = {};
+  teams.forEach((team) => {
+    const asset = normalizeTeamAsset(team, leagueId);
+    if (!asset) return;
+    [team.name, team.shortName, team.tla].forEach((alias) => {
+      const key = normalizeLookupKey(alias);
+      if (!key || assets[key]) return;
+      assets[key] = asset;
+    });
+  });
+  matches.forEach((match) => {
+    [match?.homeTeam, match?.awayTeam].forEach((team) => {
+      if (!team?.name) return;
+      const asset = normalizeTeamAsset(team, leagueId);
+      if (!asset) return;
+      [team.name, team.shortName, team.tla].forEach((alias) => {
+        const key = normalizeLookupKey(alias);
+        if (!key || assets[key]) return;
+        assets[key] = asset;
+      });
+    });
+  });
+  return assets;
+}
+
+function normalizeTeamAsset(team, leagueId) {
+  const name = String(team?.name || "").trim();
+  if (!name) return null;
+  const teamKey = normalizeLookupKey(name);
+  return {
+    name,
+    shortName: String(team?.shortName || "").trim() || name,
+    tla: String(team?.tla || "").trim(),
+    crestUrl: String(team?.crest || "").trim(),
+    proxyUrl: teamKey && leagueId
+      ? `/api/media/team-crest?leagueId=${encodeURIComponent(leagueId)}&team=${encodeURIComponent(teamKey)}`
+      : "",
+  };
+}
+
+function buildMatchGroupsMap(matches) {
+  const groups = {};
+  matches.forEach((match) => {
+    const sourceId = Number(match?.id);
+    if (!Number.isFinite(sourceId)) return;
+    const label = normalizeMatchGroupLabel(match);
+    if (!label) return;
+    groups[String(sourceId)] = label;
+  });
+  return groups;
+}
+
+function normalizeMatchGroupLabel(match) {
+  const rawGroup = String(match?.group || "").trim();
+  if (!rawGroup) return "";
+  const translated = translateStage(rawGroup);
+  if (!translated || translated === "Fase de grupos" || translated === "Sin fase") return "";
+  return translated;
+}
+
+function normalizeLookupKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+async function serveFlagAsset(env, rawFlagCode) {
+  const flagCode = String(rawFlagCode || "").trim().toLowerCase();
+  const subdivisionFlags = {
+    "gb-eng": "https://flagcdn.com/gb-eng.svg",
+    "gb-sct": "https://flagcdn.com/gb-sct.svg",
+    "gb-wls": "https://flagcdn.com/gb-wls.svg",
+    "gb-nir": "https://flagcdn.com/gb-nir.svg",
+  };
+  const isCountryFlag = /^[a-z]{2}$/.test(flagCode);
+  const sourceUrl = subdivisionFlags[flagCode] || (isCountryFlag
+    ? `https://hatscripts.github.io/circle-flags/flags/${flagCode}.svg`
+    : "");
+  if (!sourceUrl) {
+    throw httpError("Bandera no válida.", 400);
+  }
+  return serveRemoteMediaAsset(
+    env,
+    `flags/${flagCode}.svg`,
+    sourceUrl,
+    "image/svg+xml; charset=utf-8",
+  );
+}
+
+async function serveTeamCrestAsset(env, leagueId, teamKey) {
+  if (!leagueId || !teamKey) throw httpError("Faltan parámetros para cargar el escudo.", 400);
+  const league = await getLeagueById(env.DB, leagueId);
+  if (!league) throw httpError("Liga no encontrada.", 404);
+  const normalizedTeamKey = normalizeLookupKey(teamKey);
+  let payload = await getLeagueTeamAssetsData(env, league);
+  let asset = payload.assets?.[normalizedTeamKey];
+  if (!asset?.crestUrl) {
+    payload = await getLeagueTeamAssetsData(env, league, { bypassCache: true });
+    asset = payload.assets?.[normalizedTeamKey];
+  }
+  if (!asset?.crestUrl) throw httpError("Escudo no disponible.", 404);
+
+  const extension = asset.crestUrl.includes(".svg") ? "svg" : "png";
+  return serveRemoteMediaAsset(
+    env,
+    `crests/${leagueId}/${normalizedTeamKey}.${extension}`,
+    asset.crestUrl,
+    extension === "svg" ? "image/svg+xml; charset=utf-8" : "image/png",
+  );
+}
+
+async function serveRemoteMediaAsset(env, objectKey, sourceUrl, fallbackType) {
+  if (env.MEDIA_BUCKET) {
+    const cachedObject = await env.MEDIA_BUCKET.get(objectKey);
+    if (cachedObject) {
+      return new Response(cachedObject.body, {
+        headers: {
+          "content-type": cachedObject.httpMetadata?.contentType || fallbackType,
+          "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+        },
+      });
+    }
+  }
+
+  const response = await fetch(sourceUrl, {
+    cf: { cacheEverything: true, cacheTtl: 86400 },
+    headers: { "user-agent": "football-porra-tracker/1.0" },
+  });
+  if (!response.ok) {
+    throw httpError("No se pudo cargar el recurso solicitado.", 502);
+  }
+
+  const buffer = await response.arrayBuffer();
+  const contentType = response.headers.get("content-type") || fallbackType;
+  if (env.MEDIA_BUCKET) {
+    await env.MEDIA_BUCKET.put(objectKey, buffer, {
+      httpMetadata: { contentType },
+    });
+  }
+
+  return new Response(buffer, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=86400, stale-while-revalidate=604800",
+    },
+  });
 }
 
 async function runScheduledLeagueSync(controller, env) {
@@ -1282,28 +1929,48 @@ async function runScheduledLeagueSync(controller, env) {
 
   const competitions = await getCompetitions(env);
   const results = [];
+  const groups = new Map();
 
   for (const league of leagues) {
+    const key = `${league.competitionCode}:${league.season}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(league);
+  }
+
+  for (const groupLeagues of groups.values()) {
+    const [sourceLeague] = groupLeagues;
     try {
-      const result = await syncExistingLeague(env, league, competitions);
-      await createAuditLog(env.DB, {
-        organizationId: league.organizationId,
-        actorUserId: null,
-        actorRole: "system",
-        actorDisplayName: "cron-sync",
-        actionType: "league_synced_automatic",
-        entityType: "league",
-        entityId: league.id,
-        entityLabel: league.name,
-        details: { matchesCount: result.matchesCount, standingsCount: result.standingsCount },
-      });
-      results.push({ leagueId: league.id, leagueName: league.name, ok: true, ...result });
+      const result = await syncCompetitionSeason(env, sourceLeague, competitions);
+      const statements = groupLeagues.map((league) =>
+        env.DB.prepare(
+          "UPDATE leagues SET competition_id = ?2, competition_name = ?3, last_sync_at = ?4, updated_at = ?4 WHERE id = ?1",
+        ).bind(league.id, result.competitionId, result.competitionName, result.syncedAt),
+      );
+      await executeBatches(env.DB, statements, 40);
+
+      for (const league of groupLeagues) {
+        await createAuditLog(env.DB, {
+          organizationId: league.organizationId,
+          actorUserId: null,
+          actorRole: "system",
+          actorDisplayName: "cron-sync",
+          actionType: "league_synced_automatic",
+          entityType: "league",
+          entityId: league.id,
+          entityLabel: league.name,
+          details: { matchesCount: result.matchesCount, standingsCount: result.standingsCount },
+        });
+        await bumpLeagueCacheVersion(env, league.id);
+        results.push({ leagueId: league.id, leagueName: league.name, ok: true, ...result });
+      }
     } catch (error) {
-      results.push({
-        leagueId: league.id,
-        leagueName: league.name,
-        ok: false,
-        error: error.message || "Error desconocido",
+      groupLeagues.forEach((league) => {
+        results.push({
+          leagueId: league.id,
+          leagueName: league.name,
+          ok: false,
+          error: error.message || "Error desconocido",
+        });
       });
     }
   }
@@ -1319,59 +1986,135 @@ async function runScheduledLeagueSync(controller, env) {
 }
 
 async function upsertLeaguePrediction(db, user, payload) {
+  const prepared = await preparePredictionWrite(db, user, payload);
+  const { league, id, matchId, homeGoals, awayGoals, now } = prepared;
+  await db.prepare(
+    `INSERT INTO league_predictions (
+       id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+     ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
+       id = excluded.id,
+       home_goals = excluded.home_goals,
+       away_goals = excluded.away_goals,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(id, user.id, league.id, matchId, homeGoals, awayGoals, now)
+    .run();
+
+  return {
+    id,
+    userId: user.id,
+    displayName: user.displayName,
+    email: user.email,
+    leagueId: league.id,
+    matchId,
+    homeGoals,
+    awayGoals,
+    pointsAwarded: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function preparePredictionWrite(db, user, payload) {
+  const leagueId = String(payload?.leagueId || "").trim();
   const matchId = String(payload?.matchId || "").trim();
   const homeGoals = Number(payload?.homeGoals);
   const awayGoals = Number(payload?.awayGoals);
+  if (!leagueId) throw httpError("Selecciona una liga.", 400);
   if (!matchId) throw httpError("Selecciona un partido.", 400);
   if (!Number.isInteger(homeGoals) || homeGoals < 0 || !Number.isInteger(awayGoals) || awayGoals < 0) {
     throw httpError("Introduce un marcador válido.", 400);
   }
 
-  const match = await db.prepare("SELECT * FROM league_matches WHERE id = ?1").bind(matchId).first();
-  if (!match) throw httpError("Partido no encontrado.", 404);
-  const league = await getLeagueById(db, match.league_id);
+  const league = await getLeagueById(db, leagueId);
+  if (!league) throw httpError("Liga no encontrada.", 404);
   await ensureLeagueAccess(db, user, league.id);
+  const match = await db.prepare(
+    `SELECT shared_matches.*, ?1 AS league_id
+       FROM shared_matches
+      WHERE id = ?2 AND competition_code = ?3 AND season = ?4`,
+  ).bind(league.id, matchId, league.competitionCode, league.season).first();
+  if (!match) throw httpError("Partido no encontrado.", 404);
   if (!canPredict(match, league)) throw httpError("Las apuestas para este partido ya están cerradas.", 409);
 
-  const id = crypto.randomUUID();
+  const id = buildLeaguePredictionId(user.id, league.id, matchId);
   const now = new Date().toISOString();
+  return { league, id, matchId, homeGoals, awayGoals, now };
+}
+
+async function enqueueLeaguePrediction(env, user, payload) {
+  if (!env.PREDICTION_QUEUE) {
+    return upsertLeaguePrediction(env.DB, user, payload);
+  }
+
+  const prepared = await preparePredictionWrite(env.DB, user, payload);
+  await env.PREDICTION_QUEUE.send({
+    type: "prediction_upsert",
+    predictionId: prepared.id,
+    userId: user.id,
+    displayName: user.displayName,
+    email: user.email,
+    organizationId: user.organizationId,
+    leagueId: prepared.league.id,
+    matchId: prepared.matchId,
+    homeGoals: prepared.homeGoals,
+    awayGoals: prepared.awayGoals,
+    createdAt: prepared.now,
+  });
+
+  return {
+    id: prepared.id,
+    userId: user.id,
+    displayName: user.displayName,
+    email: user.email,
+    leagueId: prepared.league.id,
+    matchId: prepared.matchId,
+    homeGoals: prepared.homeGoals,
+    awayGoals: prepared.awayGoals,
+    pointsAwarded: 0,
+    createdAt: prepared.now,
+    updatedAt: prepared.now,
+  };
+}
+
+async function persistQueuedPrediction(db, payload) {
   await db.prepare(
     `INSERT INTO league_predictions (
-       id, user_id, match_id, home_goals, away_goals, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
-     ON CONFLICT(user_id, match_id) DO UPDATE SET
+       id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+     ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
+       id = excluded.id,
        home_goals = excluded.home_goals,
        away_goals = excluded.away_goals,
        updated_at = excluded.updated_at`,
   )
-    .bind(id, user.id, matchId, homeGoals, awayGoals, now)
+    .bind(
+      payload.predictionId,
+      payload.userId,
+      payload.leagueId,
+      payload.matchId,
+      payload.homeGoals,
+      payload.awayGoals,
+      payload.createdAt || new Date().toISOString(),
+    )
     .run();
+}
 
-  const saved = await db.prepare(
-    "SELECT id, user_id, match_id, home_goals, away_goals, created_at, updated_at FROM league_predictions WHERE user_id = ?1 AND match_id = ?2",
-  )
-    .bind(user.id, matchId)
-    .first();
-
-  return {
-    id: saved.id,
-    userId: saved.user_id,
-    displayName: user.displayName,
-    email: user.email,
-    matchId: saved.match_id,
-    homeGoals: Number(saved.home_goals),
-    awayGoals: Number(saved.away_goals),
-    pointsAwarded: 0,
-    createdAt: saved.created_at,
-    updatedAt: saved.updated_at,
-  };
+function isPredictionQueueEnabled(env) {
+  return Boolean(env.PREDICTION_QUEUE) && String(env.ENABLE_PREDICTION_QUEUE || "").toLowerCase() === "true";
 }
 
 async function deleteLeaguePrediction(db, user, predictionId) {
   const row = await db.prepare(
-    `SELECT league_predictions.id, league_predictions.user_id, league_predictions.match_id, league_matches.league_id, league_matches.utc_date, league_matches.status
+    `SELECT league_predictions.id,
+            league_predictions.user_id,
+            league_predictions.league_id,
+            league_predictions.match_id,
+            shared_matches.utc_date,
+            shared_matches.status
        FROM league_predictions
-       JOIN league_matches ON league_matches.id = league_predictions.match_id
+       JOIN shared_matches ON shared_matches.id = league_predictions.match_id
       WHERE league_predictions.id = ?1`,
   )
     .bind(predictionId)
@@ -1381,6 +2124,7 @@ async function deleteLeaguePrediction(db, user, predictionId) {
   const league = await getLeagueById(db, row.league_id);
   if (!canPredict(row, league)) throw httpError("Ya no se puede eliminar esta porra.", 409);
   await db.prepare("DELETE FROM league_predictions WHERE id = ?1").bind(predictionId).run();
+  return { ok: true, leagueId: league.id };
 }
 
 async function getManageableUsers(db, actingUser) {
@@ -1639,7 +2383,61 @@ async function getLeagueUsers(db, leagueId) {
   )
     .bind(leagueId)
     .all();
-  return (result.results || []).map((row) => ({
+  return mapLeagueUsers(result.results || []);
+}
+
+async function getLeagueMatches(db, leagueId) {
+  const league = await getLeagueById(db, leagueId);
+  if (!league) return [];
+  const result = await db.prepare(
+    `SELECT shared_matches.*, ?1 AS league_id
+       FROM shared_matches
+      WHERE competition_code = ?2 AND season = ?3
+      ORDER BY utc_date ASC`,
+  )
+    .bind(league.id, league.competitionCode, league.season)
+    .all();
+  return mapLeagueMatches(result.results || []);
+}
+
+async function getLeagueStandings(db, leagueId) {
+  const league = await getLeagueById(db, leagueId);
+  if (!league) return [];
+  const result = await db.prepare(
+    `SELECT *
+       FROM shared_standings
+      WHERE competition_code = ?1 AND season = ?2
+      ORDER BY sort_order ASC`,
+  )
+    .bind(league.competitionCode, league.season)
+    .all();
+  return mapLeagueStandings(result.results || []);
+}
+
+async function getLeaguePredictions(db, leagueId) {
+  const result = await db.prepare(
+    `SELECT league_predictions.id,
+            league_predictions.user_id AS userId,
+            league_predictions.league_id AS leagueId,
+            users.display_name AS displayName,
+            users.email AS email,
+            league_predictions.match_id AS matchId,
+            league_predictions.home_goals AS homeGoals,
+            league_predictions.away_goals AS awayGoals,
+            league_predictions.created_at AS createdAt,
+            league_predictions.updated_at AS updatedAt
+       FROM league_predictions
+       JOIN users ON users.id = league_predictions.user_id
+      WHERE league_predictions.league_id = ?1
+      ORDER BY league_predictions.updated_at DESC`,
+  )
+    .bind(leagueId)
+    .all();
+  return mapLeaguePredictions(result.results || []);
+}
+
+function mapLeagueUsers(rows) {
+  return rows.map((row) => ({
     id: row.id,
     displayName: row.display_name,
     email: row.email,
@@ -1648,11 +2446,8 @@ async function getLeagueUsers(db, leagueId) {
   }));
 }
 
-async function getLeagueMatches(db, leagueId) {
-  const result = await db.prepare("SELECT * FROM league_matches WHERE league_id = ?1 ORDER BY utc_date ASC")
-    .bind(leagueId)
-    .all();
-  return (result.results || []).map((row) => ({
+function mapLeagueMatches(rows) {
+  return rows.map((row) => ({
     id: row.id,
     leagueId: row.league_id,
     sourceMatchId: Number(row.source_match_id),
@@ -1671,11 +2466,8 @@ async function getLeagueMatches(db, leagueId) {
   }));
 }
 
-async function getLeagueStandings(db, leagueId) {
-  const result = await db.prepare("SELECT * FROM league_standings WHERE league_id = ?1 ORDER BY sort_order ASC")
-    .bind(leagueId)
-    .all();
-  return (result.results || []).map((row) => ({
+function mapLeagueStandings(rows) {
+  return rows.map((row) => ({
     id: row.id,
     label: row.label,
     rows: safeParseJson(row.rows_json, []),
@@ -1683,28 +2475,11 @@ async function getLeagueStandings(db, leagueId) {
   }));
 }
 
-async function getLeaguePredictions(db, leagueId) {
-  const result = await db.prepare(
-    `SELECT league_predictions.id,
-            league_predictions.user_id AS userId,
-            users.display_name AS displayName,
-            users.email AS email,
-            league_predictions.match_id AS matchId,
-            league_predictions.home_goals AS homeGoals,
-            league_predictions.away_goals AS awayGoals,
-            league_predictions.created_at AS createdAt,
-            league_predictions.updated_at AS updatedAt
-       FROM league_predictions
-       JOIN users ON users.id = league_predictions.user_id
-       JOIN league_matches ON league_matches.id = league_predictions.match_id
-      WHERE league_matches.league_id = ?1
-      ORDER BY league_predictions.updated_at DESC`,
-  )
-    .bind(leagueId)
-    .all();
-  return (result.results || []).map((row) => ({
+function mapLeaguePredictions(rows) {
+  return rows.map((row) => ({
     id: row.id,
     userId: row.userId,
+    leagueId: row.leagueId,
     displayName: row.displayName,
     email: row.email,
     matchId: row.matchId,
@@ -1726,20 +2501,11 @@ async function deleteUserRecords(db, userId) {
 }
 
 async function deleteLeagueRecords(db, leagueId) {
-  const matches = await db.prepare("SELECT id FROM league_matches WHERE league_id = ?1").bind(leagueId).all();
   const statements = [
     db.prepare("DELETE FROM league_memberships WHERE league_id = ?1").bind(leagueId),
-    db.prepare("DELETE FROM league_standings WHERE league_id = ?1").bind(leagueId),
-  ];
-
-  (matches.results || []).forEach((row) => {
-    statements.push(db.prepare("DELETE FROM league_predictions WHERE match_id = ?1").bind(row.id));
-  });
-
-  statements.push(
-    db.prepare("DELETE FROM league_matches WHERE league_id = ?1").bind(leagueId),
+    db.prepare("DELETE FROM league_predictions WHERE league_id = ?1").bind(leagueId),
     db.prepare("DELETE FROM leagues WHERE id = ?1").bind(leagueId),
-  );
+  ];
 
   await executeBatches(db, statements, 30);
 }
@@ -1779,6 +2545,10 @@ async function validateLeagueIdsForOrganization(db, organizationId, leagueIds) {
 }
 
 async function getCompetitions(env) {
+  if (env.APP_CACHE) {
+    const cached = await cacheGetJson(env.APP_CACHE, "competitions:index");
+    if (cached) return cached;
+  }
   if (!env.FOOTBALL_DATA_API_TOKEN) return FALLBACK_COMPETITIONS;
   const response = await fetch(`${API_BASE}/competitions`, {
     headers: { "X-Auth-Token": env.FOOTBALL_DATA_API_TOKEN },
@@ -1797,7 +2567,7 @@ async function getCompetitions(env) {
       const competition = mapByCode.get(code);
       return { id: competition.id, code, name: competition.name || competition.code };
     });
-  return preferred.length
+  const result = preferred.length
     ? preferred
     : competitions
         .filter((competition) => competition?.code)
@@ -1807,6 +2577,10 @@ async function getCompetitions(env) {
           name: competition.name || competition.code,
         }))
         .slice(0, 40);
+  if (env.APP_CACHE) {
+    await cachePutJson(env.APP_CACHE, "competitions:index", result, COMPETITIONS_CACHE_TTL_SECONDS);
+  }
+  return result;
 }
 
 async function fetchCompetitionResource(token, candidateKeys, resource, season, allowEmpty = false) {
@@ -1838,7 +2612,7 @@ async function fetchCompetitionResource(token, candidateKeys, resource, season, 
 function normalizeMatch(raw, leagueId, competitionCode, competitionName, season, syncedAt) {
   if (!raw?.id || !raw?.utcDate) return null;
   return {
-    id: `${leagueId}:${raw.id}`,
+    id: buildSharedMatchId(competitionCode, season, raw.id),
     leagueId,
     sourceMatchId: Number(raw.id),
     competitionCode,
@@ -1856,7 +2630,7 @@ function normalizeMatch(raw, leagueId, competitionCode, competitionName, season,
   };
 }
 
-function normalizeStandings(standings, leagueId, syncedAt) {
+function normalizeStandings(standings, competitionCode, competitionName, season, syncedAt) {
   return standings
     .map((entry) => {
       const rows = Array.isArray(entry?.table)
@@ -1878,7 +2652,14 @@ function normalizeStandings(standings, leagueId, syncedAt) {
         .filter(Boolean)
         .filter((value, index, array) => array.indexOf(value) === index)
         .join(" · ");
-      return { leagueId, label: label || "Tabla general", rows, lastSyncedAt: syncedAt };
+      return {
+        competitionCode,
+        competitionName,
+        season: Number(season),
+        label: label || "Tabla general",
+        rows,
+        lastSyncedAt: syncedAt,
+      };
     })
     .filter(Boolean);
 }
@@ -1973,6 +2754,22 @@ function appendCookie(headersInit, cookieValue) {
   const headers = new Headers(headersInit || {});
   headers.append("Set-Cookie", cookieValue);
   return headers;
+}
+
+function shouldUseSecureCookie(url) {
+  const hostname = String(url.hostname || "").trim().toLowerCase();
+  if (!hostname) return url.protocol === "https:";
+  if (
+    hostname === "localhost" ||
+    hostname === "0.0.0.0" ||
+    hostname === "127.0.0.1" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  ) {
+    return false;
+  }
+  return url.protocol === "https:";
 }
 
 async function hashPassword(password) {
@@ -2224,6 +3021,18 @@ function slugify(value) {
     .slice(0, 60);
 }
 
+function buildPredictionId(userId, matchId) {
+  return `prediction:${userId}:${matchId}`;
+}
+
+function buildLeaguePredictionId(userId, leagueId, matchId) {
+  return `prediction:${userId}:${leagueId}:${matchId}`;
+}
+
+function buildSharedMatchId(competitionCode, season, sourceMatchId) {
+  return `match:${competitionCode}:${Number(season)}:${Number(sourceMatchId)}`;
+}
+
 async function generateUniqueOrganizationSlug(db, name) {
   const base = slugify(name) || "organizacion";
   let slug = base;
@@ -2285,10 +3094,210 @@ async function executeBatches(db, statements, chunkSize = 40) {
   }
 }
 
+function parseUserImportCsv(csvText) {
+  const matrix = parseCsvMatrix(csvText);
+  if (!matrix.length) return [];
+
+  const [headerRow, ...dataRows] = matrix;
+  const headers = headerRow.map((value) => normalizeLookupKey(value));
+  const requiredHeaders = ["nombre", "email", "ligas"];
+  requiredHeaders.forEach((header) => {
+    if (!headers.includes(header)) {
+      throw httpError(`La plantilla debe incluir la columna "${header}".`, 400);
+    }
+  });
+
+  const rows = [];
+  dataRows.forEach((row, index) => {
+    const values = [...row];
+    while (values.length < headers.length) values.push("");
+    const isEmpty = values.every((value) => !String(value || "").trim());
+    if (isEmpty) return;
+
+    const entry = { __lineNumber: index + 2 };
+    headers.forEach((header, columnIndex) => {
+      entry[header] = String(values[columnIndex] || "").trim();
+    });
+    rows.push(entry);
+  });
+  return rows;
+}
+
+function parseCsvMatrix(csvText) {
+  const source = String(csvText || "").replace(/^\uFEFF/, "");
+  if (!source.trim()) return [];
+
+  const rows = [];
+  let row = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        value += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(value);
+      value = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+      continue;
+    }
+
+    value += char;
+  }
+
+  row.push(value);
+  rows.push(row);
+  return rows;
+}
+
+function normalizeImportEmail(value) {
+  try {
+    return normalizeEmail(value);
+  } catch {
+    return "";
+  }
+}
+
+function splitImportLeagues(value) {
+  return String(value || "")
+    .split(/[|;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseImportActiveFlag(value) {
+  const normalized = normalizeLookupKey(value);
+  if (!normalized) return true;
+  if (["si", "sí", "s", "true", "1", "activo", "activa", "yes"].includes(normalized)) return true;
+  if (["no", "n", "false", "0", "inactivo", "inactiva"].includes(normalized)) return false;
+  return true;
+}
+
+async function getExistingEmails(db, emails) {
+  const uniqueEmails = [...new Set(emails.filter(Boolean))];
+  if (!uniqueEmails.length) return new Set();
+
+  const existingEmails = new Set();
+  const chunkSize = 200;
+
+  for (let index = 0; index < uniqueEmails.length; index += chunkSize) {
+    const chunk = uniqueEmails.slice(index, index + chunkSize);
+    const placeholders = chunk.map((_, chunkIndex) => `?${chunkIndex + 1}`).join(", ");
+    const statement = db.prepare(
+      `SELECT email_normalized FROM users WHERE email_normalized IN (${placeholders})`,
+    ).bind(...chunk);
+    const result = await statement.all();
+    (result.results || []).forEach((row) => existingEmails.add(row.email_normalized));
+  }
+
+  return existingEmails;
+}
+
+function buildUserImportReportCsv(rows) {
+  const lines = [[
+    "fila",
+    "estado",
+    "nombre",
+    "correo",
+    "ligas",
+    "detalle",
+    "contrasena_temporal",
+  ]];
+
+  rows.forEach((row) => {
+    lines.push([
+      row.lineNumber,
+      row.finalStatus || row.status || "",
+      row.displayName || "",
+      row.email || "",
+      Array.isArray(row.leagues) ? row.leagues.join(" | ") : "",
+      Array.isArray(row.messages) ? row.messages.join(" | ") : "",
+      row.temporaryPassword || "",
+    ]);
+  });
+
+  return lines
+    .map((line) => line.map((value) => escapeCsvValue(value)).join(","))
+    .join("\n");
+}
+
+function escapeCsvValue(value) {
+  const text = String(value ?? "");
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+  return text;
+}
+
+function getLeagueVersionKey(leagueId) {
+  return `version:league:${leagueId}`;
+}
+
+async function getCacheVersion(env, key) {
+  if (!env.APP_CACHE) return "0";
+  return (await env.APP_CACHE.get(key)) || "0";
+}
+
+async function bumpCacheVersion(env, key) {
+  if (!env.APP_CACHE) return;
+  await env.APP_CACHE.put(key, String(Date.now()));
+}
+
+async function bumpGlobalCacheVersion(env) {
+  await bumpCacheVersion(env, GLOBAL_CACHE_VERSION_KEY);
+}
+
+async function bumpLeagueCacheVersion(env, leagueId) {
+  if (!leagueId) return;
+  await bumpCacheVersion(env, getLeagueVersionKey(leagueId));
+}
+
+async function cacheGetJson(cache, key) {
+  const value = await cache.get(key, "text");
+  if (!value) return null;
+  return safeParseJson(value, null);
+}
+
+async function cachePutJson(cache, key, body, ttlSeconds) {
+  await cache.put(key, JSON.stringify(body), { expirationTtl: ttlSeconds });
+}
+
+function textResponse(body, status = 200, headersInit) {
+  const headers = new Headers(headersInit || {});
+  if (!headers.has("content-type")) {
+    headers.set("content-type", "text/plain; charset=utf-8");
+  }
+  if (!headers.has("cache-control")) {
+    headers.set("cache-control", "no-store");
+  }
+  return new Response(String(body), { status, headers });
+}
+
 function jsonResponse(body, status = 200, headersInit) {
   const headers = new Headers(headersInit || {});
   headers.set("content-type", "application/json; charset=utf-8");
-  headers.set("cache-control", "no-store");
+  if (!headers.has("cache-control")) {
+    headers.set("cache-control", "no-store");
+  }
   return new Response(JSON.stringify(body), { status, headers });
 }
 

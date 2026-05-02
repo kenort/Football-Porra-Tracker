@@ -4,8 +4,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard | Football Porra Tracker</title>
+  <title>Football Porra Tracker</title>
   <meta name="description" content="Sistema SaaS de porras multi-liga con roles y reglas por organización." />
+  <meta name="theme-color" content="#0ea5e9" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="icon" href="icon-ball.svg" type="image/svg+xml" />
+  <link rel="icon" href="icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="manifest" href="site.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -30,7 +37,8 @@
           <p class="topbar-eyebrow">Football Porra Tracker</p>
           <h1 class="topbar-title">Centro de ligas</h1>
         </div>
-        <button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menú" aria-expanded="false">
+        <button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menú"
+          aria-expanded="false">
           <span></span>
           <span></span>
           <span></span>
@@ -38,7 +46,7 @@
       </div>
       <div id="topbar-actions" class="topbar-actions">
         <label class="field-label topbar-select">
-          <span class="field-title">Liga activa</span>
+          <span class="field-title">Torneo activo</span>
           <select id="league-switcher" class="field-input field-input--dark"></select>
         </label>
         <div class="viewer-chip">
@@ -47,9 +55,10 @@
         </div>
         <div class="topbar-utility-row">
           <button id="guide-trigger" class="btn btn-ghost btn-guide" type="button">Guía</button>
-          <button id="theme-toggle" class="theme-toggle theme-toggle--inline" aria-label="Cambiar tema" title="Cambiar modo día/noche">
-            <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+          <button id="theme-toggle" class="theme-toggle theme-toggle--inline" aria-label="Cambiar tema"
+            title="Cambiar modo día/noche">
+            <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="5" />
               <line x1="12" y1="1" x2="12" y2="3" />
               <line x1="12" y1="21" x2="12" y2="23" />
@@ -60,8 +69,8 @@
               <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
               <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
             </svg>
-            <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
           </button>
@@ -109,6 +118,14 @@
             </div>
             <span id="stat-3-name" class="stat-name">Predicciones</span>
             <p id="total-predictions" class="stat-num">0</p>
+          </article>
+          <article id="stat-4-card" class="stat-card" hidden>
+            <div class="stat-top">
+              <div id="stat-4-icon" class="stat-icon stat-icon--cyan">U</div>
+              <span id="stat-4-tag" class="stat-tag">USERS</span>
+            </div>
+            <span id="stat-4-name" class="stat-name">Participantes autorizados</span>
+            <p id="total-members" class="stat-num">0</p>
           </article>
         </div>
 
@@ -174,32 +191,12 @@
 
     <section class="view-panel" data-panel="partidos">
       <div class="app-scroll">
-        <div id="prediction-card" class="pred-card">
-          <div class="pred-card-top">Mi porra</div>
-          <form id="prediction-form" class="pred-form">
-            <label class="field-label">
-              <span class="field-title-sm">Partido</span>
-              <select id="predictionMatch" class="field-input field-input--dark"></select>
-            </label>
-            <div class="score-row">
-              <label class="score-box">
-                <span id="prediction-home-label" class="score-box-label">LOCAL</span>
-                <input id="predictionHome" type="number" min="0" class="score-num" />
-              </label>
-              <label class="score-box">
-                <span id="prediction-away-label" class="score-box-label">VISITA</span>
-                <input id="predictionAway" type="number" min="0" class="score-num" />
-              </label>
-            </div>
-            <button type="submit" class="btn btn-cyan btn-full">Guardar porra</button>
-            <button id="delete-prediction" type="button" class="btn btn-ghost btn-full">Eliminar porra</button>
-            <p id="prediction-help" class="status-msg"></p>
-          </form>
-        </div>
-
-        <div class="filter-block">
-          <p class="filter-label-top">Filtros</p>
-          <form class="filters-row">
+        <details id="matches-filters-panel" class="filter-block filter-panel">
+          <summary class="filter-toggle">
+            <span class="filter-label-top">Filtros</span>
+            <span class="filter-toggle-copy">Abrir filtros</span>
+          </summary>
+          <form class="filters-row filter-panel-body">
             <div class="icon-input-wrap">
               <svg class="icon-input-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="2.5" stroke-linecap="round">
@@ -216,10 +213,11 @@
             <input type="date" id="date-to" class="field-input field-input--filter" />
             <button id="clear-filters" type="button" class="btn btn-ghost btn-xs">Limpiar</button>
           </form>
-        </div>
+        </details>
 
         <p id="matches-visible" class="status-msg"></p>
-        <div class="table-wrap">
+        <div id="matches-groups" class="matches-groups" hidden></div>
+        <div id="matches-table-wrap" class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -254,7 +252,8 @@
               </label>
               <label class="field-label">
                 <span class="field-title">Buscar usuario</span>
-                <input id="admin-bets-user-filter" class="field-input field-input--dark" placeholder="Nombre o correo" />
+                <input id="admin-bets-user-filter" class="field-input field-input--dark"
+                  placeholder="Nombre o correo" />
               </label>
               <label class="field-label">
                 <span class="field-title">Tendencia</span>
@@ -363,7 +362,8 @@
         <div id="superadmin-panel" hidden>
           <div class="superadmin-layout">
             <div class="superadmin-nav">
-              <button type="button" class="superadmin-nav-btn active" data-superadmin-view="organizations">Organizaciones</button>
+              <button type="button" class="superadmin-nav-btn active"
+                data-superadmin-view="organizations">Organizaciones</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="admins">Admins</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="profile">Mi perfil</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="audit">Logs</button>
@@ -371,7 +371,8 @@
 
             <section class="superadmin-section active" data-superadmin-section="organizations">
               <div class="pred-card-top">Organizaciones</div>
-              <p class="status-msg">Activa, desactiva o elimina organizaciones sin mezclar toda la operación en una sola pantalla.</p>
+              <p class="status-msg">Activa, desactiva o elimina organizaciones sin mezclar toda la operación en una sola
+                pantalla.</p>
               <div id="organizations-list" class="chips"></div>
             </section>
 
@@ -388,7 +389,8 @@
                     </label>
                     <label class="field-label">
                       <span class="field-title">Nueva organización</span>
-                      <input id="organization-name" class="field-input field-input--dark" placeholder="Solo si vas a crear una nueva" />
+                      <input id="organization-name" class="field-input field-input--dark"
+                        placeholder="Solo si vas a crear una nueva" />
                     </label>
                     <label class="field-label">
                       <span class="field-title">Nombre del admin</span>
@@ -446,14 +448,17 @@
                     <span class="field-title">Contraseña actual</span>
                     <div class="password-wrap">
                       <input id="profile-current-password" type="password" class="field-input field-input--dark" />
-                      <button type="button" class="password-toggle" data-toggle-password="profile-current-password">Ver</button>
+                      <button type="button" class="password-toggle"
+                        data-toggle-password="profile-current-password">Ver</button>
                     </div>
                   </label>
                   <label class="field-label">
                     <span class="field-title">Nueva contraseña</span>
                     <div class="password-wrap">
-                      <input id="profile-new-password" type="password" minlength="8" class="field-input field-input--dark" />
-                      <button type="button" class="password-toggle" data-toggle-password="profile-new-password">Ver</button>
+                      <input id="profile-new-password" type="password" minlength="8"
+                        class="field-input field-input--dark" />
+                      <button type="button" class="password-toggle"
+                        data-toggle-password="profile-new-password">Ver</button>
                     </div>
                   </label>
                   <button type="submit" class="btn btn-cyan">Actualizar perfil</button>
@@ -496,6 +501,27 @@
 
         <div id="admin-panel" hidden>
           <div class="admin-grid">
+            <div class="config-card">
+              <div class="pred-card-top">Carga masiva de usuarios</div>
+              <p class="page-sub">Sube una plantilla CSV con nombre, correo, ligas y estado. El sistema validará el archivo antes de crear usuarios con contraseña temporal.</p>
+              <form id="bulk-import-form" class="pred-form">
+                <label class="field-label">
+                  <span class="field-title">Archivo CSV</span>
+                  <input id="bulk-import-file" type="file" class="field-input field-input--dark" accept=".csv,text/csv" />
+                </label>
+                <div class="action-row">
+                  <button id="download-import-template" type="button" class="btn btn-ghost">Descargar plantilla</button>
+                  <button id="bulk-import-preview-btn" type="button" class="btn btn-ghost">Validar archivo</button>
+                  <button id="bulk-import-open-preview" type="button" class="btn btn-ghost" disabled>Ver detalle</button>
+                  <button id="bulk-import-confirm-btn" type="button" class="btn btn-cyan" disabled>Confirmar importación</button>
+                  <button id="bulk-import-export-btn" type="button" class="btn btn-ghost" disabled>Exportar resultado</button>
+                </div>
+                <p id="bulk-import-status" class="status-msg"></p>
+              </form>
+              <div id="bulk-import-leagues" class="import-league-list"></div>
+              <div id="bulk-import-summary" class="quick-list" hidden></div>
+            </div>
+
             <div class="config-card">
               <div class="pred-card-top">Crear o editar usuario</div>
               <form id="user-form" class="pred-form">
@@ -570,7 +596,8 @@
           <div class="config-card">
             <div class="pred-card-top">Usuarios</div>
             <div class="action-row action-row--tight">
-              <button id="delete-all-users" type="button" class="btn btn-ghost-danger">Eliminar todos los usuarios</button>
+              <button id="delete-all-users" type="button" class="btn btn-ghost-danger">Eliminar todos los
+                usuarios</button>
             </div>
             <div class="table-wrap">
               <table class="users-table">
@@ -609,7 +636,8 @@
           <div class="config-card">
             <div class="pred-card-top">Ligas</div>
             <div class="action-row action-row--tight">
-              <button id="delete-all-leagues" type="button" class="btn btn-ghost-danger">Eliminar todas las ligas</button>
+              <button id="delete-all-leagues" type="button" class="btn btn-ghost-danger">Eliminar todas las
+                ligas</button>
             </div>
             <div class="table-wrap">
               <table class="leagues-table">
@@ -720,6 +748,80 @@
         <button id="confirm-delete-action" type="button" class="btn btn-ghost-danger" disabled>Eliminar</button>
       </div>
       <p id="confirm-delete-status" class="status-msg"></p>
+    </div>
+  </div>
+
+  <div id="bulk-import-modal" class="loading-overlay" hidden>
+    <div class="loading-card loading-card--form bulk-import-modal-card">
+      <div class="guide-head">
+        <span class="section-title">Detalle de carga masiva</span>
+        <button id="bulk-import-modal-close" type="button" class="icon-btn" aria-label="Cerrar detalle">×</button>
+      </div>
+      <div class="bulk-import-modal-toolbar">
+        <p id="bulk-import-modal-summary" class="page-sub"></p>
+        <label class="field-label bulk-import-page-size">
+          <span class="field-title">Filas por página</span>
+          <select id="bulk-import-page-size" class="field-input field-input--dark">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="40">40</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-wrap bulk-import-modal-table">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Fila</th>
+              <th>Estado</th>
+              <th>Nombre</th>
+              <th>Correo</th>
+              <th>Ligas</th>
+              <th>Detalle</th>
+              <th>Temporal</th>
+            </tr>
+          </thead>
+          <tbody id="bulk-import-preview-body">
+            <tr><td colspan="7">Todavía no has cargado un archivo.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination bulk-import-pagination">
+        <button id="bulk-import-prev-page" type="button" class="btn btn-ghost btn-xs">Anterior</button>
+        <span id="bulk-import-page-info" class="status-msg">Página 1 de 1</span>
+        <button id="bulk-import-next-page" type="button" class="btn btn-ghost btn-xs">Siguiente</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="prediction-modal" class="loading-overlay" hidden>
+    <div class="loading-card loading-card--form prediction-modal-card">
+      <div class="guide-head">
+        <span class="section-title">Haz tu porra</span>
+        <button id="prediction-modal-close" type="button" class="icon-btn" aria-label="Cerrar apuesta">×</button>
+      </div>
+      <p id="prediction-modal-subtitle" class="page-sub"></p>
+      <form id="prediction-modal-form" class="pred-form">
+        <div class="prediction-modal-teams">
+          <label class="score-box prediction-modal-scorebox">
+            <span class="score-box-label">Local</span>
+            <div id="prediction-modal-home-team" class="prediction-modal-team"></div>
+            <input id="prediction-modal-home" type="number" min="0" class="score-num" />
+          </label>
+          <label class="score-box prediction-modal-scorebox">
+            <span class="score-box-label">Visita</span>
+            <div id="prediction-modal-away-team" class="prediction-modal-team"></div>
+            <input id="prediction-modal-away" type="number" min="0" class="score-num" />
+          </label>
+        </div>
+        <div class="action-row prediction-modal-actions">
+          <button type="submit" class="btn btn-cyan">Guardar porra</button>
+          <button id="prediction-modal-delete" type="button" class="btn btn-ghost">Eliminar porra</button>
+        </div>
+        <p id="prediction-modal-status" class="status-msg"></p>
+      </form>
     </div>
   </div>
 

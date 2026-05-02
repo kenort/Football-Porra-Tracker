@@ -6,9 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:remote": "wrangler dev --remote",
+    "dev:local-prod-data": "npm run db:clone:prod-to-local && npm run dev",
     "deploy": "wrangler deploy",
     "db:migrate": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "db:clone:prod-to-local": "mkdir -p ./tmp && rm -rf ./.wrangler/state && wrangler d1 export football-porra --remote --output=./tmp/prod-clone.sql && printf 'PRAGMA foreign_keys=OFF;\\n' > ./tmp/prod-clone-import.sql && cat ./tmp/prod-clone.sql >> ./tmp/prod-clone-import.sql && printf '\\nPRAGMA foreign_keys=ON;\\n' >> ./tmp/prod-clone-import.sql && wrangler d1 execute DB --local --file=./tmp/prod-clone-import.sql"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

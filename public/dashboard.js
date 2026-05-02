@@ -43,20 +43,24 @@ const stageFilter = document.getElementById("stage-filter");
 const dateFromInput = document.getElementById("date-from");
 const dateToInput = document.getElementById("date-to");
 const clearFiltersBtn = document.getElementById("clear-filters");
+const matchesFiltersPanel = document.getElementById("matches-filters-panel");
 const matchesVisibleEl = document.getElementById("matches-visible");
+const matchesGroups = document.getElementById("matches-groups");
+const matchesTableWrap = document.getElementById("matches-table-wrap");
 const prevPageBtn = document.getElementById("prev-page");
 const nextPageBtn = document.getElementById("next-page");
 const pageInfoEl = document.getElementById("page-info");
 
-const predictionCard = document.getElementById("prediction-card");
-const predictionForm = document.getElementById("prediction-form");
-const predictionMatch = document.getElementById("predictionMatch");
-const predictionHome = document.getElementById("predictionHome");
-const predictionAway = document.getElementById("predictionAway");
-const predictionHomeLabel = document.getElementById("prediction-home-label");
-const predictionAwayLabel = document.getElementById("prediction-away-label");
-const deletePredictionBtn = document.getElementById("delete-prediction");
-const predictionHelp = document.getElementById("prediction-help");
+const predictionModal = document.getElementById("prediction-modal");
+const predictionModalCloseBtn = document.getElementById("prediction-modal-close");
+const predictionModalForm = document.getElementById("prediction-modal-form");
+const predictionModalSubtitle = document.getElementById("prediction-modal-subtitle");
+const predictionModalHomeTeam = document.getElementById("prediction-modal-home-team");
+const predictionModalAwayTeam = document.getElementById("prediction-modal-away-team");
+const predictionModalHomeInput = document.getElementById("prediction-modal-home");
+const predictionModalAwayInput = document.getElementById("prediction-modal-away");
+const predictionModalDeleteBtn = document.getElementById("prediction-modal-delete");
+const predictionModalStatus = document.getElementById("prediction-modal-status");
 
 const matchesBody = document.getElementById("matches-body");
 const adminBetsMatch = document.getElementById("admin-bets-match");
@@ -89,6 +93,11 @@ const stat2Name = document.getElementById("stat-2-name");
 const stat3Icon = document.getElementById("stat-3-icon");
 const stat3Tag = document.getElementById("stat-3-tag");
 const stat3Name = document.getElementById("stat-3-name");
+const stat4Card = document.getElementById("stat-4-card");
+const stat4Icon = document.getElementById("stat-4-icon");
+const stat4Tag = document.getElementById("stat-4-tag");
+const stat4Name = document.getElementById("stat-4-name");
+const totalMembersEl = document.getElementById("total-members");
 
 const superadminPanel = document.getElementById("superadmin-panel");
 const profileForm = document.getElementById("profile-form");
@@ -125,6 +134,24 @@ const userLeaguesInput = document.getElementById("user-leagues");
 const userActiveInput = document.getElementById("user-active");
 const userStatus = document.getElementById("user-status");
 const resetUserFormBtn = document.getElementById("reset-user-form");
+const bulkImportForm = document.getElementById("bulk-import-form");
+const bulkImportFileInput = document.getElementById("bulk-import-file");
+const downloadImportTemplateBtn = document.getElementById("download-import-template");
+const bulkImportPreviewBtn = document.getElementById("bulk-import-preview-btn");
+const bulkImportOpenPreviewBtn = document.getElementById("bulk-import-open-preview");
+const bulkImportConfirmBtn = document.getElementById("bulk-import-confirm-btn");
+const bulkImportExportBtn = document.getElementById("bulk-import-export-btn");
+const bulkImportStatus = document.getElementById("bulk-import-status");
+const bulkImportLeagues = document.getElementById("bulk-import-leagues");
+const bulkImportSummary = document.getElementById("bulk-import-summary");
+const bulkImportModal = document.getElementById("bulk-import-modal");
+const bulkImportModalCloseBtn = document.getElementById("bulk-import-modal-close");
+const bulkImportModalSummary = document.getElementById("bulk-import-modal-summary");
+const bulkImportPageSizeInput = document.getElementById("bulk-import-page-size");
+const bulkImportPrevPageBtn = document.getElementById("bulk-import-prev-page");
+const bulkImportNextPageBtn = document.getElementById("bulk-import-next-page");
+const bulkImportPageInfo = document.getElementById("bulk-import-page-info");
+const bulkImportPreviewBody = document.getElementById("bulk-import-preview-body");
 
 const adminLeagueForm = document.getElementById("admin-league-form");
 const adminLeagueNameInput = document.getElementById("admin-league-name");
@@ -181,6 +208,12 @@ let activeSuperadminSection = "organizations";
 let pendingDeleteAction = null;
 let auditLogs = [];
 let temporaryPasswordNotice = "";
+let activePredictionModalMatchId = "";
+let predictionModalCloseTimer = null;
+let predictionMutationInFlight = false;
+let bulkImportPreviewState = null;
+let bulkImportPage = 1;
+let bulkImportPageSize = 10;
 const filters = {
   teamQuery: "",
   stage: "",
@@ -193,6 +226,119 @@ const adminBetsFilters = {
   outcome: "",
 };
 const GUIDE_STORAGE_PREFIX = "porra_guide_seen";
+const COUNTRY_CODES = [
+  "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AR", "AS", "AT", "AU", "AW", "AZ",
+  "BA", "BB", "BD", "BE", "BF", "BG", "BH", "BI", "BJ", "BM", "BN", "BO", "BR", "BS",
+  "BT", "BW", "BY", "BZ", "CA", "CD", "CF", "CG", "CH", "CI", "CL", "CM", "CN", "CO",
+  "CR", "CU", "CV", "CW", "CY", "CZ", "DE", "DJ", "DK", "DM", "DO", "DZ", "EC", "EE",
+  "EG", "EH", "ER", "ES", "ET", "FI", "FJ", "FM", "FO", "FR", "GA", "GB", "GD", "GE",
+  "GF", "GH", "GI", "GL", "GM", "GN", "GQ", "GR", "GT", "GU", "GW", "GY", "HK", "HN",
+  "HR", "HT", "HU", "ID", "IE", "IL", "IN", "IQ", "IR", "IS", "IT", "JM", "JO", "JP",
+  "KE", "KG", "KH", "KI", "KM", "KN", "KP", "KR", "KW", "KY", "KZ", "LA", "LB", "LC",
+  "LI", "LK", "LR", "LS", "LT", "LU", "LV", "LY", "MA", "MC", "MD", "ME", "MG", "MH",
+  "MK", "ML", "MM", "MN", "MO", "MR", "MT", "MU", "MV", "MW", "MX", "MY", "MZ", "NA",
+  "NE", "NG", "NI", "NL", "NO", "NP", "NR", "NZ", "OM", "PA", "PE", "PF", "PG", "PH",
+  "PK", "PL", "PR", "PS", "PT", "PW", "PY", "QA", "RO", "RS", "RU", "RW", "SA", "SB",
+  "SC", "SD", "SE", "SG", "SI", "SK", "SL", "SM", "SN", "SO", "SR", "SS", "ST", "SV",
+  "SY", "SZ", "TC", "TD", "TG", "TH", "TJ", "TL", "TM", "TN", "TO", "TR", "TT", "TV",
+  "TW", "TZ", "UA", "UG", "US", "UY", "UZ", "VA", "VC", "VE", "VG", "VI", "VN", "VU",
+  "WS", "YE", "ZA", "ZM", "ZW",
+];
+const SPECIAL_TEAM_PRESENTATIONS = {
+  england: { name: "Inglaterra", flag: "", flagCode: "gb-eng" },
+  scotland: { name: "Escocia", flag: "", flagCode: "gb-sct" },
+  wales: { name: "Gales", flag: "", flagCode: "gb-wls" },
+  "northern ireland": { name: "Irlanda del Norte", flag: "", flagCode: "gb-nir" },
+  kosovo: { name: "Kosovo", flag: "🇽🇰", flagCode: "xk" },
+};
+const COUNTRY_NAME_OVERRIDES = {
+  CI: "Costa de Marfil",
+  CV: "Cabo Verde",
+  CZ: "República Checa",
+  KR: "Corea del Sur",
+  KP: "Corea del Norte",
+  NL: "Países Bajos",
+  NZ: "Nueva Zelanda",
+  SA: "Arabia Saudita",
+  TR: "Turquía",
+  US: "Estados Unidos",
+};
+const COUNTRY_NAME_ALIASES = {
+  usa: "US",
+  usmnt: "US",
+  "united states": "US",
+  "united states of america": "US",
+  "south korea": "KR",
+  korea: "KR",
+  "korea republic": "KR",
+  "republic of korea": "KR",
+  "north korea": "KP",
+  "dpr korea": "KP",
+  "saudi arabia": "SA",
+  "costa rica": "CR",
+  "czechia": "CZ",
+  "czech republic": "CZ",
+  "ivory coast": "CI",
+  "cote d'ivoire": "CI",
+  "côte d'ivoire": "CI",
+  "new zealand": "NZ",
+  "the netherlands": "NL",
+  netherlands: "NL",
+  holland: "NL",
+  "bosnia and herzegovina": "BA",
+  "bosnia-herzegovina": "BA",
+  "cape verde": "CV",
+  "cape verde islands": "CV",
+  "cabo verde": "CV",
+  "dr congo": "CD",
+  "congo dr": "CD",
+  "congo rd": "CD",
+  "congo, dr": "CD",
+  "congo, democratic republic of the": "CD",
+  "democratic republic of the congo": "CD",
+  "republic of the congo": "CG",
+  "congo republic": "CG",
+  "equatorial guinea": "GQ",
+  "guinea bissau": "GW",
+  "guinea-bissau": "GW",
+  "uae": "AE",
+  "uae national team": "AE",
+  "united arab emirates": "AE",
+  "north macedonia": "MK",
+  macedonia: "MK",
+  "ir iran": "IR",
+  iran: "IR",
+  "pr china": "CN",
+  "china pr": "CN",
+  "people's republic of china": "CN",
+  "peoples republic of china": "CN",
+  "chinese taipei": "TW",
+  taiwan: "TW",
+  "hong kong": "HK",
+  "faroe islands": "FO",
+  "saint kitts and nevis": "KN",
+  "st kitts and nevis": "KN",
+  "saint vincent and the grenadines": "VC",
+  "st vincent and the grenadines": "VC",
+  "saint lucia": "LC",
+  "st lucia": "LC",
+  "antigua and barbuda": "AG",
+  "trinidad and tobago": "TT",
+  palestine: "PS",
+  "puerto rico": "PR",
+  curacao: "CW",
+  curaçao: "CW",
+  "el salvador": "SV",
+  "sao tome and principe": "ST",
+  "são tomé and príncipe": "ST",
+  "sao tome & principe": "ST",
+  "eswatini": "SZ",
+  swaziland: "SZ",
+  "the gambia": "GM",
+  turkey: "TR",
+  "türkiye": "TR",
+};
+const TEAM_PRESENTATION_LOOKUP = buildTeamPresentationLookup();
 const GUIDE_CONTENT = {
   superadmin: [
     {
@@ -348,103 +494,92 @@ leagueSettingsForm.addEventListener("submit", async (event) => {
 
 syncBtn.addEventListener("click", async () => {
   if (appState.viewer?.role !== "admin" || !appState.currentLeague) return;
+  await syncLeagueById(appState.currentLeague.id);
+});
 
+async function syncLeagueById(leagueId) {
+  if (appState.viewer?.role !== "admin" || !leagueId) return;
   try {
     setLoading(true, "Sincronizando partidos...");
-    syncBtn.disabled = true;
+    if (syncBtn) syncBtn.disabled = true;
     setStatus("Sincronizando partidos y tabla...");
-    const response = await postJson(`/api/admin/sync/${encodeURIComponent(appState.currentLeague.id)}`, {});
-    await refreshApp(appState.currentLeague.id);
+    const response = await postJson(`/api/admin/sync/${encodeURIComponent(leagueId)}`, {});
+    await refreshApp(leagueId);
     setStatus(`Sincronización completada. ${response.matchesCount} partidos y ${response.standingsCount} tabla(s).`);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
-    syncBtn.disabled = false;
+    if (syncBtn) syncBtn.disabled = false;
   }
-});
+}
 
-predictionForm.addEventListener("submit", async (event) => {
+predictionModalForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (appState.viewer?.role !== "user" || !appState.currentLeague?.canPredict) return;
-
-  const matchId = predictionMatch.value;
-  const homeGoals = Number(predictionHome.value);
-  const awayGoals = Number(predictionAway.value);
+  const matchId = activePredictionModalMatchId;
+  const homeGoals = Number(predictionModalHomeInput.value);
+  const awayGoals = Number(predictionModalAwayInput.value);
 
   if (!matchId) {
-    setPredictionMessage("Selecciona un partido.", true);
+    setPredictionModalMessage("Selecciona un partido.", true);
     return;
   }
 
   if (!Number.isInteger(homeGoals) || !Number.isInteger(awayGoals) || homeGoals < 0 || awayGoals < 0) {
-    setPredictionMessage("Introduce un marcador válido.", true);
+    setPredictionModalMessage("Introduce un marcador válido.", true);
     return;
   }
 
-  try {
-    setLoading(true, "Guardando porra...");
-    const result = await postJson("/api/league/predictions", { matchId, homeGoals, awayGoals });
-    upsertLocalPrediction(result.prediction);
-    predictionMatch.value = matchId;
-    renderMatches();
-    renderStats();
-    syncPredictionFormState();
-    persistCache();
-    setPredictionMessage("Porra guardada.");
-  } catch (error) {
-    setPredictionMessage(error.message, true);
-  } finally {
-    setLoading(false);
-  }
+  await savePrediction(matchId, homeGoals, awayGoals, setPredictionModalMessage, () => {
+    syncPredictionModalState();
+    window.clearTimeout(predictionModalCloseTimer);
+    predictionModalCloseTimer = window.setTimeout(() => {
+      closePredictionModal();
+    }, 1000);
+  });
 });
 
-deletePredictionBtn.addEventListener("click", async () => {
-  const prediction = currentUserPrediction();
+predictionModalDeleteBtn?.addEventListener("click", async () => {
+  const prediction = currentPredictionForMatch(activePredictionModalMatchId);
   if (!prediction) {
-    setPredictionMessage("No tienes una porra guardada para ese partido.", true);
+    setPredictionModalMessage("No tienes una porra guardada para ese partido.", true);
     return;
   }
 
-  try {
-    setLoading(true, "Eliminando porra...");
-    await deleteJson(`/api/league/predictions/${encodeURIComponent(prediction.id)}`);
-    removeLocalPrediction(prediction.id);
-    predictionMatch.value = prediction.matchId;
-    renderMatches();
-    renderStats();
-    syncPredictionFormState();
-    persistCache();
-    setPredictionMessage("Porra eliminada.");
-  } catch (error) {
-    setPredictionMessage(error.message, true);
-  } finally {
-    setLoading(false);
-  }
+  await deletePrediction(prediction, setPredictionModalMessage, () => {
+    syncPredictionModalState();
+  });
 });
 
-predictionMatch.addEventListener("change", syncPredictionFormState);
+predictionModalCloseBtn?.addEventListener("click", closePredictionModal);
+predictionModal?.addEventListener("click", (event) => {
+  if (event.target === predictionModal) closePredictionModal();
+});
 
 teamFilterInput.addEventListener("input", () => {
   filters.teamQuery = teamFilterInput.value.trim();
   currentPage = 1;
+  syncMatchesFilterPanel();
   renderMatches();
 });
 
 stageFilter.addEventListener("change", () => {
   filters.stage = stageFilter.value;
   currentPage = 1;
+  syncMatchesFilterPanel();
   renderMatches();
 });
 
 dateFromInput.addEventListener("change", () => {
   filters.dateFrom = dateFromInput.value;
   currentPage = 1;
+  syncMatchesFilterPanel();
   renderMatches();
 });
 
 dateToInput.addEventListener("change", () => {
   filters.dateTo = dateToInput.value;
   currentPage = 1;
+  syncMatchesFilterPanel();
   renderMatches();
 });
 
@@ -458,6 +593,7 @@ clearFiltersBtn.addEventListener("click", () => {
   dateFromInput.value = "";
   dateToInput.value = "";
   currentPage = 1;
+  syncMatchesFilterPanel();
   renderMatches();
 });
 
@@ -492,6 +628,22 @@ leaderboardNextPageBtn?.addEventListener("click", () => {
 });
 
 matchesBody.addEventListener("click", (event) => {
+  handleMatchInteraction(event);
+});
+
+matchesGroups?.addEventListener("click", (event) => {
+  handleMatchInteraction(event);
+});
+
+function handleMatchInteraction(event) {
+  const subgroupButton = event.target.closest("button[data-subgroup-tab]");
+  if (subgroupButton) {
+    const parentList = subgroupButton.closest(".match-group-list");
+    if (parentList) {
+      activateSubgroupTab(parentList, subgroupButton.dataset.subgroupTab || "");
+    }
+    return;
+  }
   const adminButton = event.target.closest("button[data-open-bets-match]");
   if (adminButton) {
     adminBetsFilters.matchId = adminButton.dataset.openBetsMatch || "";
@@ -501,12 +653,10 @@ matchesBody.addEventListener("click", (event) => {
     setActiveView("porras");
     return;
   }
-  const button = event.target.closest("button[data-edit-prediction]");
-  if (!button) return;
-  predictionMatch.value = button.dataset.matchId || "";
-  syncPredictionFormState();
-  setActiveView("partidos");
-});
+  const modalButton = event.target.closest("button[data-open-prediction-modal]");
+  if (!modalButton) return;
+  openPredictionModal(modalButton.dataset.openPredictionModal || "");
+}
 
 superadminAdminForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -622,6 +772,104 @@ userForm.addEventListener("submit", async (event) => {
 
 resetUserFormBtn.addEventListener("click", resetUserForm);
 
+downloadImportTemplateBtn?.addEventListener("click", async () => {
+  try {
+    ensureBulkImportHasLeagues();
+    setLoading(true, "Generando plantilla...");
+    const csv = await getText("/api/admin/users/import-template");
+    downloadCsvFile(csv, "plantilla-carga-usuarios.csv");
+  } catch (error) {
+    if (bulkImportStatus) bulkImportStatus.textContent = error.message;
+  } finally {
+    setLoading(false);
+  }
+});
+
+bulkImportPreviewBtn?.addEventListener("click", async () => {
+  if (appState.viewer?.role !== "admin") return;
+  try {
+    ensureBulkImportHasLeagues();
+    const csvText = await readBulkImportFile();
+    setLoading(true, "Validando archivo...");
+    const result = await postJson("/api/admin/users/import-preview", { csvText });
+    bulkImportPreviewState = { csvText, ...result };
+    bulkImportPage = 1;
+    renderBulkImportPreview();
+    openBulkImportModal();
+    if (bulkImportStatus) {
+      bulkImportStatus.textContent = `Archivo validado. ${result.summary.valid} listo(s), ${result.summary.conflicts} en conflicto, ${result.summary.errors} con error.`;
+    }
+  } catch (error) {
+    bulkImportPreviewState = null;
+    renderBulkImportPreview();
+    if (bulkImportStatus) bulkImportStatus.textContent = error.message;
+  } finally {
+    setLoading(false);
+  }
+});
+
+bulkImportConfirmBtn?.addEventListener("click", async () => {
+  if (appState.viewer?.role !== "admin" || !bulkImportPreviewState?.csvText) return;
+  try {
+    ensureBulkImportHasLeagues();
+    setLoading(true, "Importando usuarios...");
+    const result = await postJson("/api/admin/users/import-commit", { csvText: bulkImportPreviewState.csvText });
+    if (result.reportCsv) {
+      downloadCsvFile(result.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.csv`);
+    }
+    closeBulkImportModal();
+    clearBulkImportState();
+    if (bulkImportStatus) {
+      bulkImportStatus.textContent = `Importación completada. ${result.summary.created} usuario(s) creado(s), ${result.summary.skipped} omitido(s), ${result.summary.errors} con error. El reporte se descargó automáticamente.`;
+    }
+    await refreshApp(appState.currentLeague?.id || "");
+  } catch (error) {
+    if (bulkImportStatus) bulkImportStatus.textContent = error.message;
+  } finally {
+    setLoading(false);
+  }
+});
+
+bulkImportExportBtn?.addEventListener("click", () => {
+  if (!bulkImportPreviewState?.reportCsv) {
+    if (bulkImportStatus) bulkImportStatus.textContent = "No hay resultado para exportar todavía.";
+    return;
+  }
+  downloadCsvFile(bulkImportPreviewState.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.csv`);
+});
+
+bulkImportOpenPreviewBtn?.addEventListener("click", () => {
+  if (!bulkImportPreviewState?.rows?.length) {
+    if (bulkImportStatus) bulkImportStatus.textContent = "Primero valida un archivo para ver el detalle.";
+    return;
+  }
+  openBulkImportModal();
+});
+
+bulkImportModalCloseBtn?.addEventListener("click", closeBulkImportModal);
+
+bulkImportModal?.addEventListener("click", (event) => {
+  if (event.target === bulkImportModal) closeBulkImportModal();
+});
+
+bulkImportPageSizeInput?.addEventListener("change", () => {
+  bulkImportPageSize = Number(bulkImportPageSizeInput.value) || 10;
+  bulkImportPage = 1;
+  renderBulkImportPreview();
+});
+
+bulkImportPrevPageBtn?.addEventListener("click", () => {
+  bulkImportPage = Math.max(1, bulkImportPage - 1);
+  renderBulkImportPreview();
+});
+
+bulkImportNextPageBtn?.addEventListener("click", () => {
+  const totalRows = bulkImportPreviewState?.rows?.length || 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / bulkImportPageSize));
+  bulkImportPage = Math.min(totalPages, bulkImportPage + 1);
+  renderBulkImportPreview();
+});
+
 usersBody.addEventListener("click", (event) => {
   const deleteButton = event.target.closest("button[data-delete-user]");
   if (deleteButton) {
@@ -722,7 +970,7 @@ deleteAllLeaguesBtn?.addEventListener("click", () => {
   const leagues = appState.adminData?.leagues || [];
   openDeleteConfirmation({
     title: "Eliminar todas las ligas",
-    message: "Se eliminarán todas las ligas de tu organización junto con partidos, tabla, membresías y porras.",
+    message: "Se eliminarán todas las ligas de tu organización junto con membresías y porras. Los partidos/resultados compartidos se conservarán para otras organizaciones.",
     summary: [
       `Ligas a eliminar: ${leagues.length}`,
       `Usuarios actuales: ${(appState.adminData?.users || []).length}`,
@@ -851,6 +1099,18 @@ async function refreshApp(preferredLeagueId = "") {
       competitions: [],
     };
 
+    const cachedLeagueState = bootstrap.currentLeague?.id
+      ? readCachedStateByLeagueId(bootstrap.currentLeague.id)
+      : null;
+    if (appState.currentLeague?.id && cachedLeagueState?.currentLeague) {
+      if (cachedLeagueState.currentLeague.teamAssets) {
+        appState.currentLeague.teamAssets = cachedLeagueState.currentLeague.teamAssets;
+      }
+      if (cachedLeagueState.currentLeague.matches?.length) {
+        mergeCachedMatchMetadata(cachedLeagueState.currentLeague.matches);
+      }
+    }
+
     render();
 
     if (bootstrap.viewer?.role !== "superadmin" && !bootstrap.viewer?.mustChangePassword) {
@@ -880,7 +1140,23 @@ async function refreshApp(preferredLeagueId = "") {
   }
 
   render();
+  void loadLeagueVisualAssets();
   maybeOpenGuide();
+}
+
+async function loadLeagueVisualAssets() {
+  const leagueId = appState.currentLeague?.id;
+  if (!leagueId || appState.viewer?.role === "superadmin") return;
+  try {
+    const payload = await getJson(`/api/leagues/${encodeURIComponent(leagueId)}/team-assets`);
+    if (!appState.currentLeague || appState.currentLeague.id !== leagueId) return;
+    appState.currentLeague.teamAssets = payload?.assets && typeof payload.assets === "object" ? payload.assets : {};
+    mergeMatchGroups(payload?.matchGroups);
+    renderMatches();
+    persistCache();
+  } catch (error) {
+    console.warn("No se pudieron cargar assets de equipos:", error);
+  }
 }
 
 async function loadAuditLogs() {
@@ -966,7 +1242,6 @@ function render() {
   renderLeagueSummary();
   renderMembers();
   renderProfileForm();
-  renderPredictionArea();
   renderStageFilter();
   renderMatches();
   renderAdminBetsMatchOptions();
@@ -1046,7 +1321,7 @@ function renderCompetitionOptions() {
 function renderLeagueSummary() {
   const league = appState.currentLeague;
   const role = appState.viewer?.role;
-  leagueConfigCard.hidden = role !== "admin";
+  leagueConfigCard.hidden = true;
 
   if (role === "superadmin") {
     const activeOrganizations = (appState.organizations || []).filter((organization) => organization.isActive);
@@ -1090,7 +1365,7 @@ function renderLeagueSummary() {
   outcomePointsInput.value = String(league.outcomePoints || "");
   lockMinutesInput.value = String(league.lockMinutes || "");
 
-  setLeagueSettingsEnabled(role === "admin");
+  setLeagueSettingsEnabled(false);
 }
 
 function renderProfileForm() {
@@ -1111,8 +1386,9 @@ function setLeagueSettingsEnabled(enabled) {
 
 function renderMembers() {
   if (membersCard) {
-    membersCard.hidden = appState.viewer?.role === "user";
+    membersCard.hidden = appState.viewer?.role !== "superadmin";
   }
+  if (membersCard?.hidden) return;
   membersList.innerHTML = "";
   if (appState.viewer?.role === "superadmin") {
     appState.organizations.forEach((organization) => {
@@ -1139,97 +1415,124 @@ function renderMembers() {
   });
 }
 
-function renderPredictionArea() {
-  const role = appState.viewer?.role;
-  const league = appState.currentLeague;
-  const canPredict = role === "user" && Boolean(league?.canPredict);
-  predictionCard.hidden = !canPredict;
-
-  if (!canPredict || !league) {
-    predictionMatch.innerHTML = '<option value="">Selecciona...</option>';
-    deletePredictionBtn.disabled = true;
-    predictionHomeLabel.textContent = "LOCAL";
-    predictionAwayLabel.textContent = "VISITA";
-    predictionHelp.textContent = role === "admin"
-      ? "Los admins gestionan reglas y ligas; las porras solo las hacen los usuarios."
-      : "";
-    return;
-  }
-
-  predictionMatch.innerHTML = "";
-  const playableMatches = league.matches.filter((match) => match.canPredict);
-  const source = playableMatches.length ? playableMatches : league.matches;
-
-  if (!source.length) {
-    predictionMatch.innerHTML = '<option value="">Sin partidos cargados</option>';
-    predictionHome.value = "";
-    predictionAway.value = "";
-    predictionHomeLabel.textContent = "LOCAL";
-    predictionAwayLabel.textContent = "VISITA";
-    deletePredictionBtn.disabled = true;
-    setPredictionMessage("Esta liga aún no tiene partidos disponibles.");
-    return;
-  }
-
-  predictionMatch.innerHTML = '<option value="">Selecciona...</option>';
-  source.forEach((match) => {
-    const option = document.createElement("option");
-    option.value = match.id;
-    option.textContent = `${formatDateTime(match.utcDate)} - ${match.homeTeam} vs ${match.awayTeam}`;
-    predictionMatch.appendChild(option);
-  });
-
-  const previousValue = predictionMatch.dataset.selectedMatchId;
-  if (previousValue && source.some((match) => match.id === previousValue)) {
-    predictionMatch.value = previousValue;
-  }
-
-  syncPredictionFormState();
+function currentPredictionForMatch(matchId) {
+  return (appState.currentLeague?.predictions || []).find(
+    (prediction) => prediction.userId === appState.viewer?.id && prediction.matchId === matchId,
+  );
 }
 
-function syncPredictionFormState() {
-  const league = appState.currentLeague;
-  if (!league || appState.viewer?.role !== "user") {
-    predictionHelp.textContent = "";
-    return;
+async function savePrediction(matchId, homeGoals, awayGoals, setMessage, onSuccess) {
+  if (predictionMutationInFlight) return;
+  try {
+    predictionMutationInFlight = true;
+    setPredictionModalPending(true);
+    setLoading(true, "Guardando porra...");
+    const result = await postJson("/api/league/predictions", {
+      leagueId: appState.currentLeague?.id,
+      matchId,
+      homeGoals,
+      awayGoals,
+    });
+    upsertLocalPrediction(result.prediction);
+    renderMatches();
+    renderStats();
+    persistCache();
+    if (typeof onSuccess === "function") onSuccess(result.prediction);
+    setMessage("Porra guardada.");
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    predictionMutationInFlight = false;
+    setPredictionModalPending(false);
+    setLoading(false);
   }
+}
 
-  predictionMatch.dataset.selectedMatchId = predictionMatch.value || "";
-  const match = league.matches.find((entry) => entry.id === predictionMatch.value);
-  const prediction = currentUserPrediction();
-  deletePredictionBtn.disabled = !prediction;
+async function deletePrediction(prediction, setMessage, onSuccess) {
+  if (predictionMutationInFlight) return;
+  try {
+    predictionMutationInFlight = true;
+    setPredictionModalPending(true);
+    setLoading(true, "Eliminando porra...");
+    await deleteJson(`/api/league/predictions/${encodeURIComponent(prediction.id)}`);
+    removeLocalPrediction(prediction.id);
+    renderMatches();
+    renderStats();
+    persistCache();
+    if (typeof onSuccess === "function") onSuccess();
+    setMessage("Porra eliminada.");
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    predictionMutationInFlight = false;
+    setPredictionModalPending(false);
+    setLoading(false);
+  }
+}
+
+function openPredictionModal(matchId) {
+  if (appState.viewer?.role !== "user" || !predictionModal) return;
+  window.clearTimeout(predictionModalCloseTimer);
+  activePredictionModalMatchId = matchId;
+  predictionModal.hidden = false;
+  syncPredictionModalState();
+}
+
+function closePredictionModal() {
+  window.clearTimeout(predictionModalCloseTimer);
+  activePredictionModalMatchId = "";
+  predictionMutationInFlight = false;
+  setPredictionModalPending(false);
+  if (predictionModal) predictionModal.hidden = true;
+}
+
+function setPredictionModalMessage(message, isError = false) {
+  if (!predictionModalStatus) return;
+  predictionModalStatus.textContent = message;
+  predictionModalStatus.style.color = isError ? "var(--danger)" : "";
+}
+
+function syncPredictionModalState() {
+  if (!predictionModal || !appState.currentLeague) return;
+  const match = appState.currentLeague.matches.find((entry) => entry.id === activePredictionModalMatchId);
+  const prediction = currentPredictionForMatch(activePredictionModalMatchId);
 
   if (!match) {
-    predictionHome.value = "";
-    predictionAway.value = "";
-    predictionHomeLabel.textContent = "LOCAL";
-    predictionAwayLabel.textContent = "VISITA";
-    setPredictionMessage("Selecciona un partido para hacer tu porra.");
+    predictionModalHomeTeam.innerHTML = "";
+    predictionModalAwayTeam.innerHTML = "";
+    predictionModalHomeInput.value = "";
+    predictionModalAwayInput.value = "";
+    predictionModalDeleteBtn.disabled = true;
+    predictionModalSubtitle.textContent = "Selecciona un partido para registrar tu apuesta.";
+    setPredictionModalMessage("Selecciona un partido para hacer tu porra.");
     return;
   }
 
-  predictionHomeLabel.textContent = match.homeTeam || "LOCAL";
-  predictionAwayLabel.textContent = match.awayTeam || "VISITA";
+  predictionModalSubtitle.textContent = `${formatDateTime(match.utcDate)} · ${match.canPredict ? "Apuestas abiertas" : "Apuestas cerradas"}`;
+  predictionModalHomeTeam.innerHTML = renderTeamLineHtml(match.homeTeam, "home");
+  predictionModalAwayTeam.innerHTML = renderTeamLineHtml(match.awayTeam, "away");
+  predictionModalDeleteBtn.disabled = !prediction;
 
   if (prediction) {
-    predictionHome.value = String(prediction.homeGoals);
-    predictionAway.value = String(prediction.awayGoals);
-    setPredictionMessage("Ya tienes una porra guardada. Puedes modificarla.");
+    predictionModalHomeInput.value = String(prediction.homeGoals);
+    predictionModalAwayInput.value = String(prediction.awayGoals);
+    setPredictionModalMessage("Ya tienes una porra guardada. Puedes modificarla.");
     return;
   }
 
-  predictionHome.value = "";
-  predictionAway.value = "";
-  setPredictionMessage(match.canPredict
+  predictionModalHomeInput.value = "";
+  predictionModalAwayInput.value = "";
+  setPredictionModalMessage(match.canPredict
     ? `Puedes apostar hasta ${formatDateTime(match.lockedAt)}.`
     : "Este partido ya cerró las apuestas.");
 }
 
-function currentUserPrediction() {
-  const matchId = predictionMatch.value;
-  return (appState.currentLeague?.predictions || []).find(
-    (prediction) => prediction.userId === appState.viewer?.id && prediction.matchId === matchId,
-  );
+function setPredictionModalPending(isPending) {
+  if (!predictionModalForm) return;
+  predictionModalForm.querySelectorAll("input, button").forEach((element) => {
+    if (element === predictionModalCloseBtn) return;
+    element.disabled = isPending;
+  });
 }
 
 function upsertLocalPrediction(prediction) {
@@ -1271,66 +1574,319 @@ function renderStageFilter() {
     stageFilter.appendChild(option);
   });
   stageFilter.value = stages.includes(filters.stage) ? filters.stage : "";
+  syncMatchesFilterPanel();
+}
+
+function hasActiveMatchFilters() {
+  return Boolean(filters.teamQuery || filters.stage || filters.dateFrom || filters.dateTo);
+}
+
+function syncMatchesFilterPanel() {
+  if (!matchesFiltersPanel) return;
+  matchesFiltersPanel.open = hasActiveMatchFilters();
+}
+
+function renderMobileMatchGroups(matches, isAdmin) {
+  if (!matchesGroups) return;
+  if (!matches.length) {
+    matchesGroups.innerHTML = '<div class="config-card"><p class="status-msg">No hay partidos con esos filtros.</p></div>';
+    return;
+  }
+
+  const groups = buildStageGroups(matches);
+
+  matchesGroups.innerHTML = "";
+  groups.forEach((group, index) => {
+    const block = document.createElement("details");
+    block.className = "match-group";
+    block.open = index === 0;
+    block.innerHTML = `
+      <summary class="match-group-summary">
+        <div>
+          <strong>${escapeHtml(group.label)}</strong>
+          <span>${group.matches.length} ${group.matches.length === 1 ? "partido" : "partidos"}</span>
+        </div>
+      </summary>
+      <div class="match-group-list"></div>
+    `;
+    const list = block.querySelector(".match-group-list");
+    if (group.subgroups?.length) {
+      list.innerHTML = renderSubgroupButtons(group.subgroups);
+      group.subgroups.forEach((subgroup, subgroupIndex) => {
+        const panel = document.createElement("div");
+        panel.className = `match-subgroup-panel ${getStageLayoutClass(group.label)}`.trim();
+        panel.dataset.subgroupPanel = subgroup.id;
+        panel.hidden = subgroupIndex !== 0;
+        subgroup.matches.forEach((match) => {
+          panel.appendChild(createMobileMatchCard(match, isAdmin));
+        });
+        list.appendChild(panel);
+      });
+    } else {
+      const panel = document.createElement("div");
+      panel.className = `match-subgroup-panel ${getStageLayoutClass(group.label)}`.trim();
+      group.matches.forEach((match) => {
+        panel.appendChild(createMobileMatchCard(match, isAdmin));
+      });
+      list.appendChild(panel);
+    }
+    matchesGroups.appendChild(block);
+  });
+}
+
+function createMobileMatchCard(match, isAdmin) {
+  const predictions = (appState.currentLeague?.predictions || []).filter((prediction) => prediction.matchId === match.id);
+  const card = document.createElement("article");
+  card.className = "match-card-mobile";
+  card.innerHTML = `
+    <div class="match-card-head">
+      <span class="match-card-date">${formatDateTime(match.utcDate)}</span>
+      <span class="match-card-status">${escapeHtml(statusBadge(match))}</span>
+    </div>
+    <div class="match-card-teams">
+      ${renderTeamLineHtml(match.homeTeam, "home")}
+      <div class="match-card-score">${escapeHtml(formatRealScore(match))}</div>
+      ${renderTeamLineHtml(match.awayTeam, "away")}
+    </div>
+    <div class="match-card-footer">
+      ${renderMatchPredictionSummary(match, predictions, isAdmin)}
+    </div>
+  `;
+  return card;
+}
+
+function renderSubgroupButtons(subgroups) {
+  return `
+    <div class="match-subgroup-tabs" role="tablist" aria-label="Grupos de la fase">
+      ${subgroups.map((subgroup, index) => `
+        <button
+          type="button"
+          class="match-subgroup-tab${index === 0 ? " is-active" : ""}"
+          data-subgroup-tab="${escapeHtml(subgroup.id)}"
+          aria-pressed="${index === 0 ? "true" : "false"}"
+        >
+          ${escapeHtml(subgroup.label)}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function activateSubgroupTab(container, subgroupId) {
+  if (!container || !subgroupId) return;
+  container.querySelectorAll("[data-subgroup-tab]").forEach((button) => {
+    const isActive = button.dataset.subgroupTab === subgroupId;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  container.querySelectorAll("[data-subgroup-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.subgroupPanel !== subgroupId;
+  });
+}
+
+function buildStageGroups(matches) {
+  const teamGroups = buildStandingTeamGroups();
+  const stages = new Map();
+
+  matches.forEach((match) => {
+    const stageLabel = match.stage || "Sin fase";
+    const stageEntry = stages.get(stageLabel) || {
+      label: stageLabel,
+      matches: [],
+      subgroupMap: new Map(),
+    };
+    stageEntry.matches.push(match);
+
+    const subgroupLabel = resolveMatchSubgroupLabel(match, teamGroups);
+    if (subgroupLabel) {
+      const subgroupKey = normalizeText(subgroupLabel);
+      const subgroupEntry = stageEntry.subgroupMap.get(subgroupKey) || {
+        id: subgroupKey,
+        label: subgroupLabel,
+        matches: [],
+      };
+      subgroupEntry.matches.push(match);
+      stageEntry.subgroupMap.set(subgroupKey, subgroupEntry);
+    }
+
+    stages.set(stageLabel, stageEntry);
+  });
+
+  return [...stages.values()].map((stage) => ({
+    label: stage.label,
+    matches: stage.matches,
+    subgroups: stage.subgroupMap.size > 1
+      ? [...stage.subgroupMap.values()].sort((left, right) => left.label.localeCompare(right.label, "es"))
+      : null,
+  }));
+}
+
+function buildStandingTeamGroups() {
+  const lookup = [];
+  (appState.currentLeague?.standings || []).forEach((standing) => {
+    const match = String(standing.label || "").match(/Grupo\s+([A-Z0-9]+)/i);
+    if (!match) return;
+    const label = `Grupo ${String(match[1]).toUpperCase()}`;
+    const teams = new Set();
+    (standing.rows || []).forEach((row) => {
+      const raw = String(row.team || "").trim();
+      if (!raw) return;
+      teams.add(normalizeText(raw));
+      teams.add(normalizeText(formatTeamName(raw)));
+    });
+    if (teams.size) {
+      lookup.push({ label, teams });
+    }
+  });
+  return lookup;
+}
+
+function mergeMatchGroups(matchGroups) {
+  if (!appState.currentLeague?.matches?.length || !matchGroups || typeof matchGroups !== "object") return;
+  appState.currentLeague.matches = appState.currentLeague.matches.map((match) => ({
+    ...match,
+    subgroupLabel: matchGroups[String(match.sourceMatchId)] || match.subgroupLabel || "",
+  }));
+}
+
+function mergeCachedMatchMetadata(cachedMatches) {
+  if (!appState.currentLeague?.matches?.length || !Array.isArray(cachedMatches)) return;
+  const cachedById = new Map(cachedMatches.map((match) => [match.id, match]));
+  appState.currentLeague.matches = appState.currentLeague.matches.map((match) => {
+    const cached = cachedById.get(match.id);
+    if (!cached) return match;
+    return {
+      ...match,
+      subgroupLabel: cached.subgroupLabel || match.subgroupLabel || "",
+    };
+  });
+}
+
+function resolveMatchSubgroupLabel(match, teamGroups) {
+  if (String(match.stage || "").toLowerCase() !== "fase de grupos") return "";
+  if (match.subgroupLabel) return match.subgroupLabel;
+  const homeTokens = [
+    normalizeText(match.homeTeam),
+    normalizeText(formatTeamName(match.homeTeam)),
+  ];
+  const awayTokens = [
+    normalizeText(match.awayTeam),
+    normalizeText(formatTeamName(match.awayTeam)),
+  ];
+
+  const found = teamGroups.find((group) => (
+    homeTokens.some((token) => token && group.teams.has(token)) &&
+    awayTokens.some((token) => token && group.teams.has(token))
+  ));
+
+  return found?.label || "";
+}
+
+function getStageLayoutClass(stageLabel) {
+  const normalized = normalizeText(stageLabel);
+  if (normalized === "semifinal" || normalized === "final" || normalized === "tercer puesto") {
+    return "match-subgroup-panel--single";
+  }
+  return "match-subgroup-panel--compact";
+}
+
+function renderMatchPredictionSummary(match, predictions, isAdmin) {
+  if (isAdmin) {
+    return `
+      <div class="match-bets-cell">
+        <strong>${predictions.length}</strong>
+        <span>${predictions.length === 1 ? "porra registrada" : "porras registradas"}</span>
+        <button type="button" class="mini-link" data-open-bets-match="${escapeHtml(match.id)}">Ver detalle</button>
+      </div>
+    `;
+  }
+
+  if (!predictions.length) {
+    return `
+      <div class="match-card-cta">
+        <span class="muted">${match.canPredict ? "Aún no has hecho tu porra." : "Sin porra registrada."}</span>
+        ${match.canPredict
+          ? `<button type="button" class="btn btn-ghost btn-xs match-card-action" data-open-prediction-modal="${escapeHtml(match.id)}">Apostar</button>`
+          : ""}
+      </div>
+    `;
+  }
+
+  return predictions.map((prediction) => {
+    const pointsText = match.isFinished ? ` · ${prediction.pointsAwarded} pts` : "";
+    const edit = appState.viewer?.role === "user" && match.canPredict
+      ? `<button type="button" class="btn btn-ghost btn-xs match-card-action" data-open-prediction-modal="${escapeHtml(match.id)}">Editar porra</button>`
+      : "";
+    return `
+      <div class="match-card-cta">
+        <span class="match-card-bet">Tu porra: ${prediction.homeGoals}-${prediction.awayGoals}${pointsText}</span>
+        ${edit}
+      </div>
+    `;
+  }).join("");
 }
 
 function renderMatches() {
   matchesBody.innerHTML = "";
+  if (matchesGroups) matchesGroups.innerHTML = "";
   const matches = appState.currentLeague?.matches || [];
   const isAdmin = appState.viewer?.role === "admin";
 
   if (!matches.length) {
     matchesBody.innerHTML = '<tr><td colspan="6">No hay partidos cargados para esta liga.</td></tr>';
+    if (matchesGroups) matchesGroups.innerHTML = '<div class="config-card"><p class="status-msg">No hay partidos cargados para esta liga.</p></div>';
     matchesVisibleEl.textContent = "Mostrando 0 de 0 partidos.";
+    if (matchesTableWrap) matchesTableWrap.hidden = true;
+    if (matchesGroups) matchesGroups.hidden = false;
+    if (prevPageBtn) prevPageBtn.closest(".pagination").hidden = true;
     updatePagination(0, 1);
     return;
   }
 
   const filtered = getFilteredMatches();
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  if (currentPage > totalPages) currentPage = totalPages;
-  const pageMatches = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  if (matchesTableWrap) matchesTableWrap.hidden = true;
+  if (matchesGroups) matchesGroups.hidden = false;
+  if (prevPageBtn) prevPageBtn.closest(".pagination").hidden = true;
 
-  matchesVisibleEl.textContent = `Mostrando ${pageMatches.length} de ${filtered.length} partidos filtrados.`;
-  updatePagination(filtered.length, totalPages);
+  matchesVisibleEl.textContent = filtered.length
+    ? `Mostrando ${filtered.length} partidos agrupados por fase.`
+    : "No hay partidos con esos filtros.";
+  renderMobileMatchGroups(filtered, isAdmin);
+  updatePagination(0, 1);
+}
 
-  if (!filtered.length) {
-    matchesBody.innerHTML = '<tr><td colspan="6">No hay partidos con esos filtros.</td></tr>';
-    return;
-  }
+function renderMatchTitleHtml(match) {
+  return `
+    <div class="match-title-inline">
+      ${renderTeamLineHtml(match.homeTeam, "home")}
+      <span class="match-title-separator">vs</span>
+      ${renderTeamLineHtml(match.awayTeam, "away")}
+    </div>
+  `;
+}
 
-  pageMatches.forEach((match) => {
-    const predictions = (appState.currentLeague?.predictions || []).filter((prediction) => prediction.matchId === match.id);
-    const predictionsHtml = isAdmin
-      ? `<div class="match-bets-cell">
-          <strong>${predictions.length}</strong>
-          <span>${predictions.length === 1 ? "porra registrada" : "porras registradas"}</span>
-          <button type="button" class="mini-link" data-open-bets-match="${escapeHtml(match.id)}">Ver detalle</button>
-        </div>`
-      : predictions.length
-        ? `<ul class="pred-list">${predictions
-            .map((prediction) => {
-              const mine = prediction.userId === appState.viewer?.id;
-              const predictionOwner = appState.viewer?.role === "user" ? "Tu porra" : escapeHtml(prediction.displayName);
-              const pointsText = match.isFinished ? ` (${prediction.pointsAwarded} pts)` : "";
-              const edit = mine && appState.viewer?.role === "user" && match.canPredict
-                ? ` <button type="button" class="mini-link" data-edit-prediction="1" data-match-id="${escapeHtml(match.id)}">Editar</button>`
-                : "";
-              return `<li>${predictionOwner}: ${prediction.homeGoals}-${prediction.awayGoals}${pointsText}${edit}</li>`;
-            })
-            .join("")}</ul>`
-        : '<span class="muted">Sin porras</span>';
+function formatMatchTitle(match) {
+  return `${formatTeamName(match.homeTeam)} vs ${formatTeamName(match.awayTeam)}`;
+}
 
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${formatDateTime(match.utcDate)}</td>
-      <td>${escapeHtml(match.stage)}</td>
-      <td>${escapeHtml(match.homeTeam)} vs ${escapeHtml(match.awayTeam)}</td>
-      <td>${formatRealScore(match)}</td>
-      <td>${statusBadge(match)}</td>
-      <td>${predictionsHtml}</td>
-    `;
-    matchesBody.appendChild(row);
-  });
+function renderTeamLineHtml(name, side) {
+  const team = getTeamPresentation(name);
+  const teamAsset = getCurrentLeagueTeamAsset(name);
+  const useNationalVisual = isNationalTeam(name);
+  const visualUrl = !useNationalVisual && (teamAsset?.crestUrl || teamAsset?.proxyUrl)
+    ? (teamAsset?.crestUrl || teamAsset?.proxyUrl)
+    : team.flagCode
+      ? getFlagAssetUrl(team.flagCode)
+      : "";
+  return `
+    <div class="team-line team-line--${side}">
+      ${visualUrl
+        ? `<img class="team-flag-image" src="${escapeHtml(visualUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true; if (this.nextElementSibling) this.nextElementSibling.hidden=false;">`
+        : ""}
+      <span class="team-flag"${team.flag ? "" : ' hidden'}${visualUrl ? ' hidden' : ""}>${team.flag || ""}</span>
+      <span class="team-name">${escapeHtml(team.name)}</span>
+    </div>
+  `;
 }
 
 function renderAdminBetsMatchOptions() {
@@ -1348,7 +1904,7 @@ function renderAdminBetsMatchOptions() {
   matches.forEach((match) => {
     const option = document.createElement("option");
     option.value = match.id;
-    option.textContent = `${formatDateTime(match.utcDate)} - ${match.homeTeam} vs ${match.awayTeam}`;
+    option.textContent = `${formatDateTime(match.utcDate)} - ${formatMatchTitle(match)}`;
     adminBetsMatch.appendChild(option);
   });
 
@@ -1382,7 +1938,7 @@ function renderAdminBetsExplorer() {
     return;
   }
 
-  adminBetsMeta.textContent = `${selectedMatch.homeTeam} vs ${selectedMatch.awayTeam} · ${formatDateTime(selectedMatch.utcDate)}`;
+  adminBetsMeta.textContent = `${formatMatchTitle(selectedMatch)} · ${formatDateTime(selectedMatch.utcDate)}`;
 
   if (!predictions.length) {
     adminBetsBody.innerHTML = '<tr><td colspan="5">Aún no hay porras para este partido.</td></tr>';
@@ -1463,7 +2019,9 @@ function getFilteredMatches() {
       if (filters.dateTo && matchDate > filters.dateTo) return false;
       if (filters.teamQuery) {
         const query = normalizeText(filters.teamQuery);
-        if (!normalizeText(match.homeTeam).includes(query) && !normalizeText(match.awayTeam).includes(query)) {
+        const homeSearch = `${normalizeText(match.homeTeam)} ${normalizeText(formatTeamName(match.homeTeam))}`;
+        const awaySearch = `${normalizeText(match.awayTeam)} ${normalizeText(formatTeamName(match.awayTeam))}`;
+        if (!homeSearch.includes(query) && !awaySearch.includes(query)) {
           return false;
         }
       }
@@ -1567,6 +2125,8 @@ function renderStats() {
   const matches = appState.currentLeague?.matches || [];
   const predictions = appState.currentLeague?.predictions || [];
   const role = appState.viewer?.role;
+  if (stat4Card) stat4Card.hidden = true;
+  if (totalMembersEl) totalMembersEl.textContent = "0";
 
   applyStatsConfig([
     { icon: "L", tag: "LIGA", name: "Partidos", tone: "cyan" },
@@ -1597,6 +2157,17 @@ function renderStats() {
     return;
   }
 
+  if (role === "admin") {
+    if (stat4Card) stat4Card.hidden = false;
+    if (totalMembersEl) totalMembersEl.textContent = String(appState.currentLeague?.members?.length || 0);
+    applyStatsConfig([
+      { icon: "L", tag: "LIGA", name: "Partidos", tone: "cyan" },
+      { icon: "F", tag: "FINAL", name: "Finalizados", tone: "green" },
+      { icon: "P", tag: "PORRAS", name: "Predicciones", tone: "orange" },
+      { icon: "U", tag: "USERS", name: "Participantes autorizados", tone: "cyan" },
+    ]);
+  }
+
   totalMatchesEl.textContent = String(matches.length);
   finishedMatchesEl.textContent = String(matches.filter((match) => match.isFinished).length);
   totalPredictionsEl.textContent = String(predictions.length);
@@ -1607,6 +2178,7 @@ function applyStatsConfig(config) {
     { icon: stat1Icon, tag: stat1Tag, name: stat1Name },
     { icon: stat2Icon, tag: stat2Tag, name: stat2Name },
     { icon: stat3Icon, tag: stat3Tag, name: stat3Name },
+    { icon: stat4Icon, tag: stat4Tag, name: stat4Name },
   ];
 
   nodes.forEach((node, index) => {
@@ -1638,6 +2210,7 @@ function renderAdmin() {
 
   if (role === "admin") {
     renderUserLeagueOptions();
+    renderBulkImportPreview();
     renderUsersTable();
     renderResetRequestsTable();
     renderLeaguesTable();
@@ -1806,6 +2379,210 @@ function renderUserLeagueOptions() {
   });
 }
 
+function renderBulkImportPreview() {
+  if (!bulkImportPreviewBody || appState.viewer?.role !== "admin") return;
+  const hasLeagues = Boolean(appState.adminData?.leagues?.length);
+  const rows = bulkImportPreviewState?.rows || [];
+  const summary = bulkImportPreviewState?.summary || null;
+
+  renderBulkImportLeagueHelp();
+
+  if (downloadImportTemplateBtn) {
+    downloadImportTemplateBtn.disabled = !hasLeagues;
+  }
+  if (bulkImportPreviewBtn) {
+    bulkImportPreviewBtn.disabled = !hasLeagues;
+  }
+  if (bulkImportOpenPreviewBtn) {
+    bulkImportOpenPreviewBtn.disabled = !hasLeagues || !rows.length;
+  }
+  if (bulkImportFileInput) {
+    bulkImportFileInput.disabled = !hasLeagues;
+  }
+
+  if (bulkImportSummary) {
+    bulkImportSummary.hidden = !summary;
+    if (summary) {
+      const isCommitted = Number(summary.created || 0) > 0 || Number(summary.skipped || 0) > 0;
+      bulkImportSummary.innerHTML = `
+        <div class="quick-item quick-item--static">
+          <div class="quick-icon">${isCommitted ? "C" : "V"}</div>
+          <div class="quick-body">
+            <span class="quick-title">${isCommitted ? "Creados" : "Válidos"}</span>
+            <span class="quick-sub">${isCommitted ? (summary.created ?? 0) : (summary.valid ?? 0)}</span>
+          </div>
+        </div>
+        <div class="quick-item quick-item--static">
+          <div class="quick-icon">${isCommitted ? "O" : "C"}</div>
+          <div class="quick-body">
+            <span class="quick-title">${isCommitted ? "Omitidos" : "Conflictos"}</span>
+            <span class="quick-sub">${isCommitted ? (summary.skipped ?? 0) : (summary.conflicts ?? 0)}</span>
+          </div>
+        </div>
+        <div class="quick-item quick-item--static">
+          <div class="quick-icon">E</div>
+          <div class="quick-body">
+            <span class="quick-title">Errores</span>
+            <span class="quick-sub">${summary.errors ?? 0}</span>
+          </div>
+        </div>
+      `;
+    } else {
+      bulkImportSummary.innerHTML = "";
+    }
+  }
+
+  if (bulkImportConfirmBtn) {
+    bulkImportConfirmBtn.disabled = !hasLeagues || !summary || !(summary.valid > 0) || Boolean(summary.created);
+  }
+  if (bulkImportExportBtn) {
+    bulkImportExportBtn.disabled = !bulkImportPreviewState?.reportCsv;
+  }
+
+  if (bulkImportModalSummary) {
+    bulkImportModalSummary.textContent = summary
+      ? `${rows.length} fila(s) revisadas. ${summary.valid ?? 0} lista(s), ${summary.conflicts ?? 0} conflicto(s), ${summary.errors ?? 0} error(es).`
+      : "Valida un archivo para revisar el detalle.";
+  }
+
+  bulkImportPreviewBody.innerHTML = "";
+  if (!hasLeagues) {
+    bulkImportPreviewBody.innerHTML = '<tr><td colspan="7">Primero crea al menos una liga para poder importar usuarios.</td></tr>';
+    renderBulkImportPagination(0);
+    return;
+  }
+  if (!rows.length) {
+    bulkImportPreviewBody.innerHTML = '<tr><td colspan="7">Todavía no has cargado un archivo.</td></tr>';
+    renderBulkImportPagination(0);
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / bulkImportPageSize));
+  bulkImportPage = Math.min(Math.max(1, bulkImportPage), totalPages);
+  const start = (bulkImportPage - 1) * bulkImportPageSize;
+  const visibleRows = rows.slice(start, start + bulkImportPageSize);
+
+  visibleRows.forEach((row) => {
+    const leagues = Array.isArray(row.leagues) ? row.leagues.join(", ") : "";
+    const detail = Array.isArray(row.messages) ? row.messages.join(" · ") : "";
+    const temporaryPassword = row.temporaryPassword || "—";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${row.lineNumber}</td>
+      <td>${escapeHtml(formatBulkImportStatus(row.status))}</td>
+      <td>${escapeHtml(row.displayName || "")}</td>
+      <td>${escapeHtml(row.email || "")}</td>
+      <td>${escapeHtml(leagues || "—")}</td>
+      <td>${escapeHtml(detail || "Sin novedades")}</td>
+      <td>${escapeHtml(temporaryPassword)}</td>
+    `;
+    bulkImportPreviewBody.appendChild(tr);
+  });
+
+  renderBulkImportPagination(rows.length);
+}
+
+function renderBulkImportPagination(totalRows) {
+  const totalPages = Math.max(1, Math.ceil(totalRows / bulkImportPageSize));
+  bulkImportPage = Math.min(Math.max(1, bulkImportPage), totalPages);
+
+  if (bulkImportPageSizeInput) {
+    bulkImportPageSizeInput.value = String(bulkImportPageSize);
+  }
+  if (bulkImportPageInfo) {
+    bulkImportPageInfo.textContent = totalRows
+      ? `Página ${bulkImportPage} de ${totalPages} · ${totalRows} fila(s)`
+      : "Sin filas para mostrar";
+  }
+  if (bulkImportPrevPageBtn) {
+    bulkImportPrevPageBtn.disabled = !totalRows || bulkImportPage <= 1;
+  }
+  if (bulkImportNextPageBtn) {
+    bulkImportNextPageBtn.disabled = !totalRows || bulkImportPage >= totalPages;
+  }
+}
+
+function openBulkImportModal() {
+  if (!bulkImportModal) return;
+  bulkImportModal.hidden = false;
+  renderBulkImportPreview();
+}
+
+function closeBulkImportModal() {
+  if (!bulkImportModal) return;
+  bulkImportModal.hidden = true;
+}
+
+function clearBulkImportState() {
+  bulkImportPreviewState = null;
+  bulkImportPage = 1;
+  if (bulkImportFileInput) bulkImportFileInput.value = "";
+  renderBulkImportPreview();
+}
+
+function renderBulkImportLeagueHelp() {
+  if (!bulkImportLeagues) return;
+  const leagues = appState.adminData?.leagues || [];
+  if (!leagues.length) {
+    bulkImportLeagues.innerHTML = `
+      <div class="import-league-empty">
+        Primero crea una liga. Después podrás descargar una plantilla con nombres reales y validar usuarios para esa organización.
+      </div>
+    `;
+    if (bulkImportStatus && !bulkImportStatus.textContent) {
+      bulkImportStatus.textContent = "La carga masiva se habilita cuando exista al menos una liga.";
+    }
+    return;
+  }
+
+  bulkImportLeagues.innerHTML = `
+    <div class="import-league-title">Ligas disponibles para la columna "ligas"</div>
+    <div class="import-league-chips">
+      ${leagues.map((league) => `
+        <span class="import-league-chip">
+          ${escapeHtml(league.name)}
+          <small>${escapeHtml([league.slug, league.competitionCode].filter(Boolean).join(" · "))}</small>
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function ensureBulkImportHasLeagues() {
+  if (appState.adminData?.leagues?.length) return;
+  throw new Error("Primero crea al menos una liga para poder descargar la plantilla o importar usuarios.");
+}
+
+function formatBulkImportStatus(status) {
+  return {
+    valid: "Listo",
+    conflict: "Conflicto",
+    error: "Error",
+    created: "Creado",
+    skipped: "Omitido",
+  }[status] || status;
+}
+
+async function readBulkImportFile() {
+  const file = bulkImportFileInput?.files?.[0];
+  if (!file) throw new Error("Selecciona un archivo CSV.");
+  const text = await file.text();
+  if (!text.trim()) throw new Error("El archivo está vacío.");
+  return text;
+}
+
+function downloadCsvFile(csv, filename) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function renderUsersTable() {
   usersBody.innerHTML = "";
   const users = appState.adminData?.users || [];
@@ -1874,7 +2651,12 @@ function renderLeaguesTable() {
           </div>
         </td>
         <td>${league.isActive ? "Activa" : "Inactiva"}</td>
-        <td><button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button></td>
+        <td>
+          <div class="table-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-sync-league="${escapeHtml(league.id)}">Sincronizar</button>
+            <button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button>
+          </div>
+        </td>
       `
       : `
         <td>${escapeHtml(league.name)}</td>
@@ -1882,20 +2664,33 @@ function renderLeaguesTable() {
         <td>${league.season}</td>
         <td>Exacto ${league.exactPoints} · Tendencia ${league.outcomePoints} · Cierre ${league.lockMinutes}m</td>
         <td>${league.isActive ? "Activa" : "Inactiva"}</td>
-        <td><button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button></td>
+        <td>
+          <div class="table-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-sync-league="${escapeHtml(league.id)}">Sincronizar</button>
+            <button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button>
+          </div>
+        </td>
       `;
     leaguesBody.appendChild(row);
   });
 }
 
 leaguesBody?.addEventListener("click", (event) => {
+  const syncButton = event.target.closest("button[data-sync-league]");
+  if (syncButton) {
+    const league = appState.adminData?.leagues?.find((entry) => entry.id === syncButton.dataset.syncLeague);
+    if (!league) return;
+    syncLeagueById(league.id);
+    return;
+  }
+
   const button = event.target.closest("button[data-delete-league]");
   if (!button) return;
   const league = appState.adminData?.leagues?.find((entry) => entry.id === button.dataset.deleteLeague);
   if (!league) return;
   openDeleteConfirmation({
     title: "Eliminar liga",
-    message: `Se eliminará la liga ${league.name} junto con partidos, tabla, membresías y porras asociadas.`,
+    message: `Se eliminará la liga ${league.name} junto con membresías y porras asociadas. Los partidos/resultados compartidos se conservarán para otras organizaciones que usen el mismo torneo.`,
     summary: [
       `Competición: ${league.competitionName} (${league.competitionCode})`,
       `Temporada: ${league.season}`,
@@ -2008,11 +2803,6 @@ function updatePagination(totalItems, totalPages) {
 function setStatus(message, isError = false) {
   syncStatus.textContent = message;
   syncStatus.style.color = isError ? "var(--danger)" : "";
-}
-
-function setPredictionMessage(message, isError = false) {
-  predictionHelp.textContent = message;
-  predictionHelp.style.color = isError ? "var(--danger)" : "";
 }
 
 function setLoading(isLoading, message = "Cargando datos...") {
@@ -2204,6 +2994,7 @@ function syncMobileMenuVisibility() {
     mobileMenuToggle.setAttribute("aria-expanded", "false");
   }
   if (appState.viewer?.role) {
+    renderMatches();
     renderAdmin();
     renderLeaderboard();
   }
@@ -2238,6 +3029,20 @@ function createInitialState() {
 async function getJson(url) {
   const response = await fetch(url, { credentials: "same-origin" });
   return handleResponse(response);
+}
+
+async function getText(url) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    throw new Error(payload?.error || payload?.message || "Ocurrió un error.");
+  }
+  return response.text();
 }
 
 async function postJson(url, payload) {
@@ -2371,6 +3176,105 @@ function statusBadge(match) {
   if (match.isFinished) return "Finalizado";
   if (match.canPredict) return "Abierto";
   return "Cerrado";
+}
+
+function buildTeamPresentationLookup() {
+  const lookup = {};
+  const englishNames = createRegionDisplayNames("en");
+  const spanishNames = createRegionDisplayNames("es");
+
+  Object.entries(SPECIAL_TEAM_PRESENTATIONS).forEach(([alias, presentation]) => {
+    registerPresentationAlias(lookup, alias, presentation);
+  });
+
+  COUNTRY_CODES.forEach((countryCode) => {
+    const englishName = englishNames?.of(countryCode) || countryCode;
+    const spanishName = COUNTRY_NAME_OVERRIDES[countryCode] || spanishNames?.of(countryCode) || englishName;
+    const presentation = {
+      name: spanishName,
+      flag: countryCodeToFlagEmoji(countryCode),
+      flagCode: countryCode.toLowerCase(),
+    };
+
+    registerPresentationAlias(lookup, countryCode, presentation);
+    registerPresentationAlias(lookup, englishName, presentation);
+    registerPresentationAlias(lookup, spanishName, presentation);
+  });
+
+  Object.entries(COUNTRY_NAME_ALIASES).forEach(([alias, countryCode]) => {
+    const presentation = lookup[countryCode] || createPresentationFromCode(countryCode, englishNames, spanishNames);
+    if (presentation) {
+      registerPresentationAlias(lookup, alias, presentation);
+      registerPresentationAlias(lookup, countryCode, presentation);
+    }
+  });
+
+  return lookup;
+}
+
+function createPresentationFromCode(countryCode, englishNames, spanishNames) {
+  const normalizedCode = String(countryCode || "").trim().toUpperCase();
+  if (!normalizedCode) return null;
+  const englishName = englishNames?.of(normalizedCode) || normalizedCode;
+  const spanishName = COUNTRY_NAME_OVERRIDES[normalizedCode] || spanishNames?.of(normalizedCode) || englishName;
+  return {
+    name: spanishName,
+    flag: countryCodeToFlagEmoji(normalizedCode),
+    flagCode: normalizedCode.toLowerCase(),
+  };
+}
+
+function registerPresentationAlias(lookup, alias, presentation) {
+  const normalizedAlias = normalizeText(alias);
+  if (!normalizedAlias || !presentation) return;
+  lookup[normalizedAlias] = presentation;
+}
+
+function createRegionDisplayNames(locale) {
+  try {
+    return new Intl.DisplayNames([locale], { type: "region" });
+  } catch {
+    return null;
+  }
+}
+
+function countryCodeToFlagEmoji(countryCode) {
+  const normalizedCode = String(countryCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalizedCode)) return "";
+  return [...normalizedCode]
+    .map((char) => String.fromCodePoint(127397 + char.charCodeAt(0)))
+    .join("");
+}
+
+function getFlagAssetUrl(flagCode) {
+  const normalized = String(flagCode || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (!/^[a-z]{2}$/.test(normalized) && !/^gb-(eng|sct|wls|nir)$/.test(normalized)) return "";
+  return `/api/media/flag/${normalized}`;
+}
+
+function getTeamPresentation(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return { name: "Equipo", flag: "" };
+  const normalized = normalizeText(raw);
+  const mapped = TEAM_PRESENTATION_LOOKUP[normalized];
+  if (!mapped) return { name: raw, flag: "" };
+  return mapped;
+}
+
+function getCurrentLeagueTeamAsset(name) {
+  const key = normalizeText(name);
+  if (!key) return null;
+  return appState.currentLeague?.teamAssets?.[key] || null;
+}
+
+function isNationalTeam(name) {
+  const key = normalizeText(name);
+  return Boolean(TEAM_PRESENTATION_LOOKUP[key]);
+}
+
+function formatTeamName(name) {
+  return getTeamPresentation(name).name;
 }
 
 function normalizeText(value) {
