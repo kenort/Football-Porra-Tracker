@@ -61,16 +61,52 @@ Esto deja:
 - cache corto de `bootstrap` en KV para bajar lecturas repetidas a D1
 - cache de competiciones y assets de equipos para reducir llamadas a `football-data`
 - escudos y banderas servidos desde el Worker y opcionalmente persistidos en R2
+- partidos y tablas compartidos por competición/temporada para evitar duplicar datos entre organizaciones
 - menos escrituras en `sessions.last_seen_at` gracias a un touch por intervalo
 - consultas agrupadas para el dashboard de liga usando `db.batch(...)`
 - guardado de porras preparado para activarse por Queue más adelante sin romper el cliente
 - assets HTML/JS/CSS con cabeceras cacheables para aprovechar edge caching
 
+## Pruebas de carga
+
+El proyecto incluye scripts `k6` para validar estabilidad y fiabilidad bajo tráfico:
+
+```bash
+npm run load:browse
+npm run load:predictions
+```
+
+La guía completa está en `tests/load/README.md`.
+
 ## Lo que sigue dependiendo de configuración de cuenta
 
 - Waiting Room no se activa por código del Worker; se configura en Cloudflare sobre tu dominio/zona
-- las colas de predicciones quedaron preparadas por feature flag, pero no están activadas por defecto
-- si más adelante quieres usar Queue en producción, habría que crear el binding real y poner `ENABLE_PREDICTION_QUEUE=true`
+- las colas de predicciones ya están configuradas y activadas con `ENABLE_PREDICTION_QUEUE=true`
+- si creas otra cuenta o proyecto, debes crear la Queue antes del despliegue
+
+```bash
+npx wrangler queues create football-porra-predictions
+```
+
+Si apagas temporalmente la cola, el guardado directo mantiene reintentos con backoff para absorber errores transitorios de D1.
+
+## Waiting Room recomendado
+
+Cloudflare Waiting Room se configura en el dashboard de Cloudflare, sobre un hostname y path específicos. La documentación oficial indica que una sala de espera necesita al menos una combinación de `hostname` y `path`, y que el path cubre también sus subrutas.
+
+Configuración sugerida para el pico de cierre de apuestas:
+
+- Hostname: tu dominio final, por ejemplo `porra.tudominio.com`.
+- Path protegido: `/dashboard`.
+- Total active users: empezar con `1000` y ajustar con k6 + métricas reales.
+- New users per minute: empezar con `300` a `500` para suavizar entradas masivas.
+- Session duration: `15` a `30` minutos para que quien ya entró pueda terminar su porra.
+- Excepciones: dejar fuera assets estáticos y, si aplica, endpoints públicos como `/login` para no afectar la carga de la pantalla inicial.
+
+Referencias oficiales:
+
+- https://developers.cloudflare.com/waiting-room/how-to/place-waiting-room/
+- https://developers.cloudflare.com/waiting-room/reference/configuration-settings/
 
 ## Despliegue en Cloudflare
 

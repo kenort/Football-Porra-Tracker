@@ -1139,9 +1139,10 @@ async function refreshApp(preferredLeagueId = "") {
     hideBootSplash();
   }
 
-  render();
-  void loadLeagueVisualAssets();
-  maybeOpenGuide();
+    render();
+    void loadLeagueVisualAssets();
+    void loadLeagueLeaderboard();
+    maybeOpenGuide();
 }
 
 async function loadLeagueVisualAssets() {
@@ -1156,6 +1157,24 @@ async function loadLeagueVisualAssets() {
     persistCache();
   } catch (error) {
     console.warn("No se pudieron cargar assets de equipos:", error);
+  }
+}
+
+async function loadLeagueLeaderboard() {
+  const leagueId = appState.currentLeague?.id;
+  if (!leagueId || appState.viewer?.role === "superadmin") return;
+  try {
+    const payload = await getJson(`/api/leagues/${encodeURIComponent(leagueId)}/leaderboard`);
+    if (!appState.currentLeague || appState.currentLeague.id !== leagueId) return;
+    appState.currentLeague.leaderboard = Array.isArray(payload?.leaderboard) ? payload.leaderboard : [];
+    appState.currentLeague.members = Array.isArray(payload?.members) ? payload.members : appState.currentLeague.members || [];
+    appState.currentLeague.memberCount = Number(payload?.memberCount || appState.currentLeague.memberCount || 0);
+    appState.currentLeague.leaderboardDeferred = false;
+    renderLeaderboard();
+    renderStats();
+    persistCache();
+  } catch (error) {
+    console.warn("No se pudo cargar el ranking:", error);
   }
 }
 
@@ -1553,15 +1572,20 @@ function upsertLocalPrediction(prediction) {
     predictions[existingIndex] = { ...predictions[existingIndex], ...nextPrediction };
   } else {
     predictions.unshift(nextPrediction);
+    appState.currentLeague.predictionCount = Number(appState.currentLeague.predictionCount || 0) + 1;
   }
   appState.currentLeague.predictions = predictions;
 }
 
 function removeLocalPrediction(predictionId) {
   if (!predictionId || !appState.currentLeague) return;
+  const before = (appState.currentLeague.predictions || []).length;
   appState.currentLeague.predictions = (appState.currentLeague.predictions || []).filter(
     (prediction) => prediction.id !== predictionId,
   );
+  if (appState.currentLeague.predictions.length < before) {
+    appState.currentLeague.predictionCount = Math.max(0, Number(appState.currentLeague.predictionCount || 0) - 1);
+  }
 }
 
 function renderStageFilter() {
@@ -2033,6 +2057,13 @@ function getFilteredMatches() {
 function renderLeaderboard() {
   leaderboardBody.innerHTML = "";
   const leaderboard = appState.currentLeague?.leaderboard || [];
+  if (appState.currentLeague?.leaderboardDeferred) {
+    leaderboardBody.innerHTML = '<tr><td colspan="5">Cargando ranking...</td></tr>';
+    if (leaderboardPageInfo) leaderboardPageInfo.textContent = "Actualizando";
+    if (leaderboardPrevPageBtn) leaderboardPrevPageBtn.disabled = true;
+    if (leaderboardNextPageBtn) leaderboardNextPageBtn.disabled = true;
+    return;
+  }
   if (!leaderboard.length) {
     leaderboardBody.innerHTML = '<tr><td colspan="5">No hay ranking disponible aún.</td></tr>';
     if (leaderboardPageInfo) leaderboardPageInfo.textContent = "Página 1 de 1";
@@ -2159,7 +2190,7 @@ function renderStats() {
 
   if (role === "admin") {
     if (stat4Card) stat4Card.hidden = false;
-    if (totalMembersEl) totalMembersEl.textContent = String(appState.currentLeague?.members?.length || 0);
+    if (totalMembersEl) totalMembersEl.textContent = String(appState.currentLeague?.memberCount || appState.currentLeague?.members?.length || 0);
     applyStatsConfig([
       { icon: "L", tag: "LIGA", name: "Partidos", tone: "cyan" },
       { icon: "F", tag: "FINAL", name: "Finalizados", tone: "green" },
@@ -2170,7 +2201,7 @@ function renderStats() {
 
   totalMatchesEl.textContent = String(matches.length);
   finishedMatchesEl.textContent = String(matches.filter((match) => match.isFinished).length);
-  totalPredictionsEl.textContent = String(predictions.length);
+  totalPredictionsEl.textContent = String(appState.currentLeague?.predictionCount ?? predictions.length);
 }
 
 function applyStatsConfig(config) {

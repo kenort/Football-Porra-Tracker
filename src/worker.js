@@ -11,6 +11,10 @@ const TEAM_ASSETS_CACHE_TTL_SECONDS = 60 * 60;
 const STATIC_HTML_CACHE_CONTROL = "public, max-age=0, s-maxage=300, stale-while-revalidate=30";
 const STATIC_ASSET_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
 const GLOBAL_CACHE_VERSION_KEY = "version:global";
+const BOOTSTRAP_PAYLOAD_VERSION = 2;
+const TRANSIENT_WRITE_RETRY_ATTEMPTS = 4;
+const TRANSIENT_WRITE_RETRY_BASE_DELAY_MS = 40;
+const PREDICTION_QUEUE_BATCH_SIZE = 25;
 const FALLBACK_COMPETITIONS = [
   { id: 2000, code: "WC", name: "FIFA World Cup" },
   { id: 2001, code: "CL", name: "UEFA Champions League" },
@@ -26,7 +30,7 @@ const FALLBACK_COMPETITIONS = [
 const PREFERRED_COMPETITION_CODES = ["WC", "CL", "PL", "PD", "BL1", "SA", "FL1", "PPL", "DED", "ELC"];
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
       const isSecureRequest = shouldUseSecureCookie(url);
@@ -101,7 +105,12 @@ export default {
         if (setupRequired) throw httpError("Primero debes crear el superadmin inicial.", 409);
         const payload = await readJson(request);
         const user = await authenticateUser(env.DB, payload?.email, payload?.password);
-        await createAuditLog(env.DB, {
+
+        if (session?.user?.id === user.id) {
+          return jsonResponse({ ok: true, user: sanitizeViewer(user), reusedSession: true });
+        }
+
+        scheduleAuditLog(ctx, env.DB, {
           organizationId: user.organizationId,
           actorUserId: user.id,
           actorRole: user.role,
@@ -167,6 +176,11 @@ export default {
 
       if (!session?.user) throw httpError("Debes iniciar sesión.", 401);
 
+      if (request.method === "GET" && url.pathname.startsWith("/api/leagues/") && url.pathname.endsWith("/leaderboard")) {
+        const leagueId = decodeURIComponent(url.pathname.slice("/api/leagues/".length, -"/leaderboard".length));
+        return jsonResponse(await getLeagueLeaderboardResponse(env.DB, session.user, leagueId));
+      }
+
       if (request.method === "GET" && url.pathname.startsWith("/api/leagues/") && url.pathname.endsWith("/team-assets")) {
         const leagueId = decodeURIComponent(url.pathname.slice("/api/leagues/".length, -"/team-assets".length));
         return jsonResponse(await getLeagueTeamAssets(env, session.user, leagueId));
@@ -214,23 +228,9 @@ export default {
         const prediction = isPredictionQueueEnabled(env)
           ? await enqueueLeaguePrediction(env, session.user, payload)
           : await upsertLeaguePrediction(env.DB, session.user, payload);
-        await createAuditLog(env.DB, {
-          organizationId: session.user.organizationId,
-          actorUserId: session.user.id,
-          actorRole: session.user.role,
-          actorDisplayName: session.user.displayName,
-          actionType: "prediction_saved",
-          entityType: "prediction",
-          entityId: prediction.id,
-          entityLabel: payload?.matchId || "",
-          details: {
-            matchId: payload?.matchId || "",
-            homeGoals: payload?.homeGoals,
-            awayGoals: payload?.awayGoals,
-          },
-        });
-        await bumpLeagueCacheVersion(env, prediction.leagueId);
-        await bumpGlobalCacheVersion(env);
+        if (!isPredictionQueueEnabled(env)) {
+          schedulePredictionSideEffects(ctx, env, session.user, prediction);
+        }
         return jsonResponse({ prediction, queued: isPredictionQueueEnabled(env) }, isPredictionQueueEnabled(env) ? 202 : 201);
       }
 
@@ -602,20 +602,8 @@ export default {
     ctx.waitUntil(runScheduledLeagueSync(controller, env));
   },
 
-  async queue(batch, env, ctx) {
-    for (const message of batch.messages) {
-      try {
-        if (message.body?.type === "prediction_upsert") {
-          await persistQueuedPrediction(env.DB, message.body);
-          await bumpLeagueCacheVersion(env, message.body.leagueId);
-          await bumpGlobalCacheVersion(env);
-        }
-        message.ack();
-      } catch (error) {
-        console.error("[queue] Error procesando mensaje", error);
-        message.retry();
-      }
-    }
+  async queue(batch, env) {
+    await processPredictionQueueBatch(batch, env);
   },
 };
 
@@ -669,7 +657,7 @@ async function buildBootstrap(env, session, setupRequired, requestedLeagueId) {
     (requestedLeagueId && accessibleLeagues.some((league) => league.id === requestedLeagueId) && requestedLeagueId) ||
     accessibleLeagues[0]?.id ||
     null;
-  const currentLeague = selectedLeagueId ? await getLeagueDashboard(env.DB, viewer, selectedLeagueId) : null;
+  const currentLeague = selectedLeagueId ? await getLeagueDashboardLite(env.DB, viewer, selectedLeagueId) : null;
 
   let adminData = null;
   if (viewer.role === "admin") {
@@ -710,11 +698,11 @@ async function buildBootstrapWithCache(env, session, setupRequired, requestedLea
 async function buildBootstrapCacheKey(env, viewer, requestedLeagueId) {
   const globalVersion = await getCacheVersion(env, GLOBAL_CACHE_VERSION_KEY);
   if (viewer.role === "superadmin") {
-    return `bootstrap:superadmin:${viewer.id}:v:${globalVersion}`;
+    return `bootstrap:v${BOOTSTRAP_PAYLOAD_VERSION}:superadmin:${viewer.id}:v:${globalVersion}`;
   }
   const selectedLeagueId = requestedLeagueId || "default";
   const leagueVersion = requestedLeagueId ? await getCacheVersion(env, getLeagueVersionKey(requestedLeagueId)) : "0";
-  return `bootstrap:${viewer.role}:${viewer.id}:league:${selectedLeagueId}:gv:${globalVersion}:lv:${leagueVersion}`;
+  return `bootstrap:v${BOOTSTRAP_PAYLOAD_VERSION}:${viewer.role}:${viewer.id}:league:${selectedLeagueId}:gv:${globalVersion}:lv:${leagueVersion}`;
 }
 
 async function serveStaticAsset(request, env, assetPath = null) {
@@ -788,6 +776,149 @@ async function getLeagueDashboard(db, viewer, leagueId) {
     predictions: visiblePredictions,
     leaderboard: buildLeaderboard(members, decoratedMatches, predictionsWithPoints, league),
     members,
+  };
+}
+
+async function getLeagueDashboardLite(db, viewer, leagueId) {
+  const league = await getLeagueById(db, leagueId);
+  if (!league) throw httpError("Liga no encontrada.", 404);
+  await ensureLeagueAccess(db, viewer, leagueId);
+
+  const { matches, standings, predictions, memberCount, predictionCount } = await getLeagueDashboardLitePayload(db, league, viewer);
+  const decoratedMatches = matches.map((match) => decorateMatch(match, league));
+
+  return {
+    ...league,
+    canAdminister: viewer.role === "admin",
+    canPredict: viewer.role === "user",
+    matches: decoratedMatches,
+    standings,
+    predictions,
+    leaderboard: [],
+    members: [],
+    memberCount,
+    predictionCount,
+    leaderboardDeferred: true,
+  };
+}
+
+async function getLeagueDashboardLitePayload(db, league, viewer) {
+  const predictionQuery = viewer.role === "user"
+    ? db.prepare(
+      `SELECT league_predictions.id,
+              league_predictions.user_id AS userId,
+              league_predictions.league_id AS leagueId,
+              users.display_name AS displayName,
+              users.email AS email,
+              league_predictions.match_id AS matchId,
+              league_predictions.home_goals AS homeGoals,
+              league_predictions.away_goals AS awayGoals,
+              league_predictions.created_at AS createdAt,
+              league_predictions.updated_at AS updatedAt
+         FROM league_predictions
+         JOIN users ON users.id = league_predictions.user_id
+        WHERE league_predictions.league_id = ?1 AND league_predictions.user_id = ?2
+        ORDER BY league_predictions.updated_at DESC`,
+    ).bind(league.id, viewer.id)
+    : db.prepare(
+      `SELECT league_predictions.id,
+              league_predictions.user_id AS userId,
+              league_predictions.league_id AS leagueId,
+              users.display_name AS displayName,
+              users.email AS email,
+              league_predictions.match_id AS matchId,
+              league_predictions.home_goals AS homeGoals,
+              league_predictions.away_goals AS awayGoals,
+              league_predictions.created_at AS createdAt,
+              league_predictions.updated_at AS updatedAt
+         FROM league_predictions
+         JOIN users ON users.id = league_predictions.user_id
+        WHERE league_predictions.league_id = ?1
+        ORDER BY league_predictions.updated_at DESC`,
+    ).bind(league.id);
+
+  const responses = await db.batch([
+    db.prepare(
+      `SELECT shared_matches.*, ?1 AS league_id
+         FROM shared_matches
+        WHERE competition_code = ?2 AND season = ?3
+        ORDER BY utc_date ASC`,
+    ).bind(league.id, league.competitionCode, league.season),
+    db.prepare(
+      `SELECT *
+         FROM shared_standings
+        WHERE competition_code = ?1 AND season = ?2
+        ORDER BY sort_order ASC`,
+    ).bind(league.competitionCode, league.season),
+    predictionQuery,
+    db.prepare(
+      `SELECT COUNT(*) AS count
+         FROM users
+         JOIN league_memberships ON league_memberships.user_id = users.id
+        WHERE league_memberships.league_id = ?1 AND users.is_active = 1`,
+    ).bind(league.id),
+    db.prepare("SELECT COUNT(*) AS count FROM league_predictions WHERE league_id = ?1").bind(league.id),
+  ]);
+
+  return {
+    matches: mapLeagueMatches((responses[0]?.results || [])),
+    standings: mapLeagueStandings((responses[1]?.results || [])),
+    predictions: mapLeaguePredictions((responses[2]?.results || [])),
+    memberCount: Number(responses[3]?.results?.[0]?.count || 0),
+    predictionCount: Number(responses[4]?.results?.[0]?.count || 0),
+  };
+}
+
+async function getLeagueLeaderboardResponse(db, viewer, leagueId) {
+  const league = await getLeagueById(db, leagueId);
+  if (!league) throw httpError("Liga no encontrada.", 404);
+  await ensureLeagueAccess(db, viewer, leagueId);
+  const { matches, predictions, members } = await getLeagueLeaderboardPayload(db, league);
+  const decoratedMatches = matches.map((match) => decorateMatch(match, league));
+  return {
+    leaderboard: buildLeaderboard(members, decoratedMatches, predictions, league),
+    members: viewer.role === "admin" ? members : [],
+    memberCount: members.length,
+  };
+}
+
+async function getLeagueLeaderboardPayload(db, league) {
+  const responses = await db.batch([
+    db.prepare(
+      `SELECT shared_matches.*, ?1 AS league_id
+         FROM shared_matches
+        WHERE competition_code = ?2 AND season = ?3
+        ORDER BY utc_date ASC`,
+    ).bind(league.id, league.competitionCode, league.season),
+    db.prepare(
+      `SELECT league_predictions.id,
+              league_predictions.user_id AS userId,
+              league_predictions.league_id AS leagueId,
+              users.display_name AS displayName,
+              users.email AS email,
+              league_predictions.match_id AS matchId,
+              league_predictions.home_goals AS homeGoals,
+              league_predictions.away_goals AS awayGoals,
+              league_predictions.created_at AS createdAt,
+              league_predictions.updated_at AS updatedAt
+         FROM league_predictions
+         JOIN users ON users.id = league_predictions.user_id
+        WHERE league_predictions.league_id = ?1
+        ORDER BY league_predictions.updated_at DESC`,
+    ).bind(league.id),
+    db.prepare(
+      `SELECT users.id, users.display_name, users.email, users.role, users.is_active
+         FROM users
+         JOIN league_memberships ON league_memberships.user_id = users.id
+        WHERE league_memberships.league_id = ?1 AND users.is_active = 1
+        ORDER BY users.display_name ASC`,
+    ).bind(league.id),
+  ]);
+
+  return {
+    matches: mapLeagueMatches((responses[0]?.results || [])),
+    predictions: mapLeaguePredictions((responses[1]?.results || [])),
+    members: mapLeagueUsers((responses[2]?.results || [])),
   };
 }
 
@@ -983,11 +1114,12 @@ async function createSession(db, userId) {
   const token = crypto.randomUUID();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000).toISOString();
-  await db.prepare(
-    "INSERT INTO sessions (id, user_id, expires_at, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-  )
-    .bind(token, userId, expiresAt, now.toISOString())
-    .run();
+  await runWithTransientRetry(() =>
+    db.prepare(
+      "INSERT INTO sessions (id, user_id, expires_at, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    )
+      .bind(token, userId, expiresAt, now.toISOString())
+      .run());
   return token;
 }
 
@@ -1988,18 +2120,19 @@ async function runScheduledLeagueSync(controller, env) {
 async function upsertLeaguePrediction(db, user, payload) {
   const prepared = await preparePredictionWrite(db, user, payload);
   const { league, id, matchId, homeGoals, awayGoals, now } = prepared;
-  await db.prepare(
-    `INSERT INTO league_predictions (
-       id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-     ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
-       id = excluded.id,
-       home_goals = excluded.home_goals,
-       away_goals = excluded.away_goals,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(id, user.id, league.id, matchId, homeGoals, awayGoals, now)
-    .run();
+  await runWithTransientRetry(() =>
+    db.prepare(
+      `INSERT INTO league_predictions (
+         id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+       ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
+         id = excluded.id,
+         home_goals = excluded.home_goals,
+         away_goals = excluded.away_goals,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(id, user.id, league.id, matchId, homeGoals, awayGoals, now)
+      .run());
 
   return {
     id,
@@ -2061,6 +2194,21 @@ async function enqueueLeaguePrediction(env, user, payload) {
     homeGoals: prepared.homeGoals,
     awayGoals: prepared.awayGoals,
     createdAt: prepared.now,
+    audit: {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      actorRole: user.role,
+      actorDisplayName: user.displayName,
+      actionType: "prediction_saved",
+      entityType: "prediction",
+      entityId: prepared.id,
+      entityLabel: prepared.matchId,
+      details: {
+        matchId: prepared.matchId,
+        homeGoals: prepared.homeGoals,
+        awayGoals: prepared.awayGoals,
+      },
+    },
   });
 
   return {
@@ -2079,26 +2227,82 @@ async function enqueueLeaguePrediction(env, user, payload) {
 }
 
 async function persistQueuedPrediction(db, payload) {
-  await db.prepare(
-    `INSERT INTO league_predictions (
-       id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-     ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
-       id = excluded.id,
-       home_goals = excluded.home_goals,
-       away_goals = excluded.away_goals,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(
-      payload.predictionId,
-      payload.userId,
-      payload.leagueId,
-      payload.matchId,
-      payload.homeGoals,
-      payload.awayGoals,
-      payload.createdAt || new Date().toISOString(),
+  await runWithTransientRetry(() =>
+    db.prepare(
+      `INSERT INTO league_predictions (
+         id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+       ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
+         id = excluded.id,
+         home_goals = excluded.home_goals,
+         away_goals = excluded.away_goals,
+         updated_at = excluded.updated_at`,
     )
-    .run();
+      .bind(
+        payload.predictionId,
+        payload.userId,
+        payload.leagueId,
+        payload.matchId,
+        payload.homeGoals,
+        payload.awayGoals,
+        payload.createdAt || new Date().toISOString(),
+      )
+      .run());
+}
+
+async function processPredictionQueueBatch(batch, env) {
+  const predictionMessages = batch.messages.filter((message) => message.body?.type === "prediction_upsert");
+  const otherMessages = batch.messages.filter((message) => message.body?.type !== "prediction_upsert");
+
+  otherMessages.forEach((message) => message.ack());
+  if (!predictionMessages.length) return;
+
+  for (let index = 0; index < predictionMessages.length; index += PREDICTION_QUEUE_BATCH_SIZE) {
+    const chunk = predictionMessages.slice(index, index + PREDICTION_QUEUE_BATCH_SIZE);
+    try {
+      await persistQueuedPredictionChunk(env.DB, chunk.map((message) => message.body));
+      chunk.forEach((message) => {
+        message.ack();
+      });
+    } catch (error) {
+      console.error("[queue] Error procesando lote de porras", error);
+      chunk.forEach((message) => message.retry());
+    }
+  }
+}
+
+async function persistQueuedPredictionChunk(db, payloads) {
+  const statements = [];
+
+  payloads.forEach((payload) => {
+    const now = payload.createdAt || new Date().toISOString();
+    statements.push(
+      db.prepare(
+        `INSERT INTO league_predictions (
+           id, user_id, league_id, match_id, home_goals, away_goals, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(user_id, league_id, match_id) DO UPDATE SET
+           id = excluded.id,
+           home_goals = excluded.home_goals,
+           away_goals = excluded.away_goals,
+           updated_at = excluded.updated_at`,
+      ).bind(
+        payload.predictionId,
+        payload.userId,
+        payload.leagueId,
+        payload.matchId,
+        payload.homeGoals,
+        payload.awayGoals,
+        now,
+      ),
+    );
+
+    if (payload.audit) {
+      statements.push(buildAuditLogStatement(db, payload.audit));
+    }
+  });
+
+  await runWithTransientRetry(() => db.batch(statements));
 }
 
 function isPredictionQueueEnabled(env) {
@@ -2242,15 +2446,19 @@ async function issueTemporaryPassword(db, actingUser, requestId) {
 }
 
 async function createAuditLog(db, entry) {
-  const now = new Date().toISOString();
-  await db.prepare(
+  await runWithTransientRetry(() => buildAuditLogStatement(db, entry).run());
+}
+
+function buildAuditLogStatement(db, entry) {
+  const now = entry.createdAt || new Date().toISOString();
+  return db.prepare(
     `INSERT INTO audit_logs (
        id, organization_id, actor_user_id, actor_role, actor_display_name,
        action_type, entity_type, entity_id, entity_label, details_json, created_at
      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
   )
     .bind(
-      crypto.randomUUID(),
+      entry.id || crypto.randomUUID(),
       entry.organizationId || null,
       entry.actorUserId || null,
       entry.actorRole,
@@ -2261,8 +2469,41 @@ async function createAuditLog(db, entry) {
       entry.entityLabel || null,
       JSON.stringify(entry.details || {}),
       now,
-    )
-    .run();
+    );
+}
+
+function scheduleAuditLog(ctx, db, entry) {
+  const task = createAuditLog(db, entry).catch((error) => {
+    console.error("[audit] No se pudo guardar auditoria diferida", error);
+  });
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(task);
+  }
+}
+
+function schedulePredictionSideEffects(ctx, env, user, prediction) {
+  const task = (async () => {
+    await createAuditLog(env.DB, {
+      organizationId: user.organizationId,
+      actorUserId: user.id,
+      actorRole: user.role,
+      actorDisplayName: user.displayName,
+      actionType: "prediction_saved",
+      entityType: "prediction",
+      entityId: prediction.id,
+      entityLabel: prediction.matchId || "",
+      details: {
+        matchId: prediction.matchId || "",
+        homeGoals: prediction.homeGoals,
+        awayGoals: prediction.awayGoals,
+      },
+    });
+  })().catch((error) => {
+    console.error("[prediction] No se pudieron completar efectos diferidos", error);
+  });
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(task);
+  }
 }
 
 async function getAuditLogs(db, organizationId = "") {
@@ -2666,9 +2907,16 @@ function normalizeStandings(standings, competitionCode, competitionName, season,
 
 function buildLeaderboard(members, matches, predictions, league) {
   const matchesById = new Map(matches.map((match) => [match.id, match]));
+  const predictionsByUser = new Map();
+  predictions.forEach((prediction) => {
+    const userPredictions = predictionsByUser.get(prediction.userId) || [];
+    userPredictions.push(prediction);
+    predictionsByUser.set(prediction.userId, userPredictions);
+  });
+
   return members
     .map((member) => {
-      const ownPredictions = predictions.filter((prediction) => prediction.userId === member.id);
+      const ownPredictions = predictionsByUser.get(member.id) || [];
       let points = 0;
       let exactHits = 0;
       let trendHits = 0;
@@ -3254,12 +3502,21 @@ function getLeagueVersionKey(leagueId) {
 
 async function getCacheVersion(env, key) {
   if (!env.APP_CACHE) return "0";
-  return (await env.APP_CACHE.get(key)) || "0";
+  try {
+    return (await env.APP_CACHE.get(key)) || "0";
+  } catch (error) {
+    console.warn("[cache] No se pudo leer version de cache", key, error);
+    return "0";
+  }
 }
 
 async function bumpCacheVersion(env, key) {
   if (!env.APP_CACHE) return;
-  await env.APP_CACHE.put(key, String(Date.now()));
+  try {
+    await env.APP_CACHE.put(key, String(Date.now()));
+  } catch (error) {
+    console.warn("[cache] No se pudo actualizar version de cache", key, error);
+  }
 }
 
 async function bumpGlobalCacheVersion(env) {
@@ -3272,13 +3529,62 @@ async function bumpLeagueCacheVersion(env, leagueId) {
 }
 
 async function cacheGetJson(cache, key) {
-  const value = await cache.get(key, "text");
-  if (!value) return null;
-  return safeParseJson(value, null);
+  try {
+    const value = await cache.get(key, "text");
+    if (!value) return null;
+    return safeParseJson(value, null);
+  } catch (error) {
+    console.warn("[cache] No se pudo leer cache", key, error);
+    return null;
+  }
 }
 
 async function cachePutJson(cache, key, body, ttlSeconds) {
-  await cache.put(key, JSON.stringify(body), { expirationTtl: ttlSeconds });
+  try {
+    await cache.put(key, JSON.stringify(body), { expirationTtl: ttlSeconds });
+  } catch (error) {
+    console.warn("[cache] No se pudo escribir cache", key, error);
+  }
+}
+
+async function runWithTransientRetry(operation, options = {}) {
+  const attempts = options.attempts || TRANSIENT_WRITE_RETRY_ATTEMPTS;
+  const baseDelayMs = options.baseDelayMs || TRANSIENT_WRITE_RETRY_BASE_DELAY_MS;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isTransientStorageError(error)) {
+        throw error;
+      }
+      await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.floor(Math.random() * baseDelayMs));
+    }
+  }
+
+  throw lastError;
+}
+
+function isTransientStorageError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return [
+    "database is locked",
+    "database busy",
+    "too many requests",
+    "rate limit",
+    "internal error",
+    "network",
+    "timeout",
+    "temporarily unavailable",
+    "transaction",
+    "d1_error",
+  ].some((fragment) => message.includes(fragment));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function textResponse(body, status = 200, headersInit) {
