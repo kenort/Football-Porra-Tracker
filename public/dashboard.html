@@ -37,6 +37,9 @@
           <p class="topbar-eyebrow">Football Porra Tracker</p>
           <h1 class="topbar-title">Centro de ligas</h1>
         </div>
+        <div id="organization-logo-slot" class="organization-logo-slot" hidden>
+          <img id="organization-logo-img" class="organization-logo-img" alt="Logo de la organización" />
+        </div>
         <button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menú"
           aria-expanded="false">
           <span></span>
@@ -55,6 +58,7 @@
         </div>
         <div class="topbar-utility-row">
           <button id="guide-trigger" class="btn btn-ghost btn-guide" type="button">Guía</button>
+          <button id="about-trigger" class="btn btn-ghost btn-about" type="button">Acerca de</button>
           <button id="theme-toggle" class="theme-toggle theme-toggle--inline" aria-label="Cambiar tema"
             title="Cambiar modo día/noche">
             <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -173,6 +177,13 @@
               <label class="field-label">
                 <span class="field-title">Cierre (min)</span>
                 <input id="lock-minutes" type="number" min="0" max="1440" class="field-input field-input--dark" />
+              </label>
+              <label class="field-label">
+                <span class="field-title">Marcador válido</span>
+                <select id="score-mode" class="field-input field-input--dark">
+                  <option value="regular_time">Tiempo reglamentario</option>
+                  <option value="full_time">Resultado final</option>
+                </select>
               </label>
             </div>
             <div class="action-row">
@@ -328,21 +339,33 @@
 
     <section class="view-panel" data-panel="clasificacion">
       <div class="app-scroll">
+        <p id="leaderboard-tie-alert" class="leaderboard-tie-alert" hidden></p>
         <div class="table-wrap">
           <table class="leaderboard-table">
             <thead>
               <tr>
                 <th>Pos</th>
                 <th>Usuario</th>
-                <th>Porras</th>
-                <th>Exactos</th>
                 <th>Puntos</th>
+                <th>Exactos</th>
+                <th>Tendencias</th>
+                <th>Porras</th>
+                <th>Final</th>
+                <th>Estado</th>
               </tr>
             </thead>
             <tbody id="leaderboard-body"></tbody>
           </table>
         </div>
         <div class="pagination">
+          <label class="leaderboard-page-size">
+            <span>Mostrar</span>
+            <select id="leaderboard-page-size" class="field-input field-input--dark">
+              <option value="10" selected>10</option>
+              <option value="30">30</option>
+              <option value="50">50</option>
+            </select>
+          </label>
           <button id="leaderboard-prev-page" type="button" class="btn btn-ghost btn-sm">Anterior</button>
           <p id="leaderboard-page-info" class="status-msg">Página 1 de 1</p>
           <button id="leaderboard-next-page" type="button" class="btn btn-ghost btn-sm">Siguiente</button>
@@ -365,6 +388,9 @@
               <button type="button" class="superadmin-nav-btn active"
                 data-superadmin-view="organizations">Organizaciones</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="admins">Admins</button>
+              <button type="button" class="superadmin-nav-btn"
+                data-superadmin-view="recoveries">Recuperación</button>
+              <button type="button" class="superadmin-nav-btn" data-superadmin-view="results">Resultados</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="profile">Mi perfil</button>
               <button type="button" class="superadmin-nav-btn" data-superadmin-view="audit">Logs</button>
             </div>
@@ -429,6 +455,62 @@
                     <tbody id="admins-body"></tbody>
                   </table>
                 </div>
+              </div>
+            </section>
+
+            <section class="superadmin-section" data-superadmin-section="recoveries" hidden>
+              <div class="config-card">
+                <div class="pred-card-top">Solicitudes de recuperación de admins</div>
+                <p class="status-msg">
+                  Atiende únicamente solicitudes de administradores. Los usuarios finales siguen siendo gestionados por
+                  su admin de organización.
+                </p>
+                <div class="table-wrap">
+                  <table class="reset-requests-table">
+                    <thead>
+                      <tr>
+                        <th>Organización</th>
+                        <th>Admin</th>
+                        <th>Correo</th>
+                        <th>Solicitada</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody id="superadmin-reset-requests-body"></tbody>
+                  </table>
+                </div>
+                <p id="superadmin-reset-request-status" class="status-msg"></p>
+              </div>
+            </section>
+
+            <section class="superadmin-section" data-superadmin-section="results" hidden>
+              <div class="config-card">
+                <div class="pred-card-top">Resultados de partidos</div>
+                <p class="status-msg">
+                  Registra un marcador únicamente cuando Football-Data marque el partido como finalizado pero todavía no entregue el resultado.
+                  Un marcador válido posterior de la API reemplazará automáticamente el valor manual.
+                </p>
+                <form id="superadmin-result-form" class="pred-form">
+                  <label class="field-label">
+                    <span class="field-title">Partido finalizado</span>
+                    <select id="superadmin-result-match" class="field-input field-input--dark"></select>
+                  </label>
+                  <div class="manual-result-score-grid">
+                    <label class="field-label">
+                      <span class="field-title">Goles local</span>
+                      <input id="superadmin-result-home" type="number" min="0" max="99" class="field-input field-input--dark" required />
+                    </label>
+                    <label class="field-label">
+                      <span class="field-title">Goles visitante</span>
+                      <input id="superadmin-result-away" type="number" min="0" max="99" class="field-input field-input--dark" required />
+                    </label>
+                  </div>
+                  <div class="action-row action-row--tight">
+                    <button type="submit" class="btn btn-cyan">Guardar resultado</button>
+                    <button id="superadmin-results-refresh" type="button" class="btn btn-ghost">Actualizar lista</button>
+                  </div>
+                  <p id="superadmin-result-status" class="status-msg"></p>
+                </form>
               </div>
             </section>
 
@@ -500,14 +582,30 @@
         </div>
 
         <div id="admin-panel" hidden>
-          <div class="admin-grid">
-            <div class="config-card">
-              <div class="pred-card-top">Carga masiva de usuarios</div>
-              <p class="page-sub">Sube una plantilla CSV con nombre, correo, ligas y estado. El sistema validará el archivo antes de crear usuarios con contraseña temporal.</p>
+          <div class="admin-command-grid">
+            <div class="config-card admin-user-command-card">
+              <div class="admin-card-heading">
+                <div>
+                  <div class="pred-card-top">Crear usuarios</div>
+                  <p class="page-sub">Gestiona altas uno a uno o carga un archivo Excel cuando tengas muchos asociados.</p>
+                </div>
+                <button id="open-user-modal" type="button" class="btn btn-cyan">Nuevo usuario</button>
+              </div>
+              <div class="admin-method-grid">
+                <div class="admin-method-card">
+                  <strong>Uno a uno</strong>
+                  <span>Para crear o ajustar usuarios puntuales con sus ligas autorizadas.</span>
+                </div>
+                <div class="admin-method-card">
+                  <strong>Carga masiva</strong>
+                  <span>Para validar e importar cientos de usuarios con plantilla Excel.</span>
+                </div>
+              </div>
               <form id="bulk-import-form" class="pred-form">
                 <label class="field-label">
-                  <span class="field-title">Archivo CSV</span>
-                  <input id="bulk-import-file" type="file" class="field-input field-input--dark" accept=".csv,text/csv" />
+                  <span class="field-title">Archivo Excel</span>
+                  <input id="bulk-import-file" type="file" class="field-input field-input--dark"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
                 </label>
                 <div class="action-row">
                   <button id="download-import-template" type="button" class="btn btn-ghost">Descargar plantilla</button>
@@ -522,82 +620,45 @@
               <div id="bulk-import-summary" class="quick-list" hidden></div>
             </div>
 
-            <div class="config-card">
-              <div class="pred-card-top">Crear o editar usuario</div>
-              <form id="user-form" class="pred-form">
-                <input id="user-id" type="hidden" />
-                <label class="field-label">
-                  <span class="field-title">Nombre</span>
-                  <input id="user-name" class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Correo</span>
-                  <input id="user-email" type="email" class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Contraseña</span>
-                  <div class="password-wrap">
-                    <input id="user-password" type="password" class="field-input field-input--dark" />
-                    <button type="button" class="password-toggle" data-toggle-password="user-password">Ver</button>
-                  </div>
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Acceso a ligas</span>
-                  <select id="user-leagues" multiple class="field-input field-input--dark multi-select"></select>
-                </label>
-                <label class="toggle-row">
-                  <input id="user-active" type="checkbox" checked />
-                  <span>Usuario activo</span>
-                </label>
-                <div class="action-row">
-                  <button type="submit" class="btn btn-cyan">Guardar usuario</button>
-                  <button id="reset-user-form" type="button" class="btn btn-ghost">Nuevo</button>
+            <div class="config-card admin-league-summary-card">
+              <div class="admin-card-heading">
+                <div>
+                  <div class="pred-card-top">Torneos activos</div>
+                  <p class="page-sub">Vista rápida de ligas disponibles para tus usuarios.</p>
                 </div>
-                <p id="user-status" class="status-msg"></p>
-              </form>
-            </div>
-
-            <div class="config-card">
-              <div class="pred-card-top">Crear liga</div>
-              <form id="admin-league-form" class="pred-form">
-                <label class="field-label">
-                  <span class="field-title">Nombre de liga</span>
-                  <input id="admin-league-name" class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Competición</span>
-                  <select id="admin-league-competition" class="field-input field-input--dark"></select>
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Temporada</span>
-                  <input id="admin-league-season" type="number" min="2000" max="2100"
-                    class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Puntos exacto</span>
-                  <input id="admin-league-exact" type="number" min="1" max="20" class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Puntos tendencia</span>
-                  <input id="admin-league-outcome" type="number" min="0" max="20"
-                    class="field-input field-input--dark" />
-                </label>
-                <label class="field-label">
-                  <span class="field-title">Cierre (min)</span>
-                  <input id="admin-league-lock" type="number" min="0" max="1440"
-                    class="field-input field-input--dark" />
-                </label>
-                <button type="submit" class="btn btn-cyan">Crear liga</button>
-                <p id="admin-league-status" class="status-msg"></p>
-              </form>
+                <button id="open-league-modal" type="button" class="btn btn-cyan">Agregar liga</button>
+              </div>
+              <div class="table-wrap table-wrap--mini">
+                <table class="leagues-table admin-leagues-mini-table">
+                  <thead>
+                    <tr>
+                      <th>Liga</th>
+                      <th>Año</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="leagues-body"></tbody>
+                </table>
+              </div>
+              <div class="action-row action-row--tight admin-danger-row">
+                <button id="delete-all-leagues" type="button" class="btn btn-ghost-danger">Eliminar todas las ligas</button>
+              </div>
             </div>
           </div>
 
-          <div class="config-card">
-            <div class="pred-card-top">Usuarios</div>
-            <div class="action-row action-row--tight">
-              <button id="delete-all-users" type="button" class="btn btn-ghost-danger">Eliminar todos los
-                usuarios</button>
+          <div class="config-card admin-users-table-card">
+            <div class="admin-card-heading">
+              <div>
+                <div class="pred-card-top">Usuarios registrados</div>
+                <p class="page-sub">Busca, pagina y edita usuarios sin cargar una lista interminable en pantalla.</p>
+              </div>
+              <button id="delete-all-users" type="button" class="btn btn-ghost-danger">Eliminar todos los usuarios</button>
+            </div>
+            <div class="admin-table-toolbar">
+              <label class="field-label admin-search-field">
+                <span class="field-title">Buscar usuario</span>
+                <input id="admin-user-search" class="field-input field-input--dark" placeholder="Nombre, correo o liga" />
+              </label>
             </div>
             <div class="table-wrap">
               <table class="users-table">
@@ -612,6 +673,11 @@
                 </thead>
                 <tbody id="users-body"></tbody>
               </table>
+            </div>
+            <div class="pagination admin-users-pagination">
+              <button id="users-prev-page" type="button" class="btn btn-ghost btn-xs">Anterior</button>
+              <span id="users-page-info" class="status-msg">Página 1 de 1</span>
+              <button id="users-next-page" type="button" class="btn btn-ghost btn-xs">Siguiente</button>
             </div>
           </div>
 
@@ -633,28 +699,35 @@
             <p id="reset-request-status" class="status-msg"></p>
           </div>
 
-          <div class="config-card">
-            <div class="pred-card-top">Ligas</div>
-            <div class="action-row action-row--tight">
-              <button id="delete-all-leagues" type="button" class="btn btn-ghost-danger">Eliminar todas las
-                ligas</button>
+          <div class="config-card organization-logo-card">
+            <div class="admin-card-heading">
+              <div>
+                <div class="pred-card-top">Imagen de la organización</div>
+                <p class="page-sub">Se mostrará en el encabezado para todos los usuarios de tu organización.</p>
+              </div>
+              <div id="organization-logo-preview" class="organization-logo-preview" aria-label="Vista previa del logo">
+                <span>Sin imagen</span>
+              </div>
             </div>
-            <div class="table-wrap">
-              <table class="leagues-table">
-                <thead>
-                  <tr>
-                    <th>Nombre</th>
-                    <th>Competición</th>
-                    <th>Temporada</th>
-                    <th>Reglas</th>
-                    <th>Estado</th>
-                    <th>Acción</th>
-                  </tr>
-                </thead>
-                <tbody id="leagues-body"></tbody>
-              </table>
-            </div>
+            <form id="organization-logo-form" class="pred-form">
+              <label class="field-label">
+                <span class="field-title">Archivo de imagen</span>
+                <input id="organization-logo-file" type="file" class="field-input field-input--dark"
+                  accept="image/png,image/webp,image/jpeg,image/svg+xml" />
+              </label>
+              <div class="logo-recommendations">
+                <span>Recomendado: PNG o WebP con fondo transparente.</span>
+                <span>Usa una imagen horizontal o cuadrada, legible en 56 px de alto.</span>
+                <span>Peso máximo: 512 KB. La imagen se ajusta sin desbordarse.</span>
+              </div>
+              <div class="action-row">
+                <button type="submit" class="btn btn-cyan">Guardar imagen</button>
+                <button id="organization-logo-delete" type="button" class="btn btn-ghost-danger">Quitar imagen</button>
+              </div>
+              <p id="organization-logo-status" class="status-msg"></p>
+            </form>
           </div>
+
         </div>
 
         <div id="admin-empty-panel" class="config-card" hidden>
@@ -751,6 +824,143 @@
     </div>
   </div>
 
+  <div id="about-modal" class="loading-overlay" hidden>
+    <div class="loading-card loading-card--form about-modal-card">
+      <div class="guide-head">
+        <div>
+          <span class="section-title">Acerca de Football Porra Tracker</span>
+          <p class="page-sub">Pronósticos deportivos colaborativos para uso recreativo y privado.</p>
+        </div>
+        <button id="about-close" type="button" class="icon-btn" aria-label="Cerrar acerca de">×</button>
+      </div>
+      <div class="about-scroll">
+        <section class="about-section">
+          <h2>Descripción de la Plataforma</h2>
+          <p><strong>Nombre del Sistema:</strong> Football Porra Tracker - Pronósticos Deportivos Colaborativos.</p>
+          <p>Nuestra plataforma es una solución SaaS (Software as a Service) diseñada para transformar la pasión del fútbol en una experiencia social y competitiva. El sistema permite a líderes de grupo, ya sean amigos, familiares, asociados o empleadores, crear comunidades privadas para realizar pronósticos de los partidos de las ligas más importantes del mundo.</p>
+          <p>A diferencia de las plataformas transaccionales tradicionales, nuestra webapp es una herramienta de gestión y recreación. Ofrecemos un entorno digital organizado donde los administradores pueden centralizar los resultados, visualizar tablas de posiciones en tiempo real y fomentar la integración de sus grupos de manera sencilla y eficiente.</p>
+        </section>
+        <section class="about-section about-section--notice">
+          <h2>Aviso Importante: Plataforma No Transaccional</h2>
+          <p><strong>Football Porra Tracker NO es un sitio de juego transaccional.</strong></p>
+          <p><strong>Sin transacciones:</strong> La plataforma no permite realizar depósitos, retiros, ni ningún tipo de movimiento de dinero real o virtual.</p>
+          <p><strong>Uso recreativo:</strong> El propósito del sitio es estrictamente recreativo y de control estadístico para grupos privados.</p>
+          <p><strong>Deslinde de responsabilidad:</strong> Nuestra labor se limita a proveer el software para el registro de predicciones. No nos hacemos responsables por acuerdos externos, premios o el manejo que los usuarios den a los resultados y ganadores dentro de sus grupos privados.</p>
+        </section>
+        <section class="about-section">
+          <h2>Política de Privacidad y Manejo de Datos</h2>
+          <p><strong>Propiedad de los datos:</strong> La información recolectada se utiliza exclusivamente para el funcionamiento técnico de la liga y la experiencia del usuario dentro de la app.</p>
+          <p><strong>No comercialización:</strong> Garantizamos que no venderemos ni comercializaremos sus datos personales ni sus tendencias de pronóstico a terceros, agencias de publicidad o bases de datos externas.</p>
+          <p><strong>Ciclo de vida de la información:</strong> Una vez que una liga o torneo finaliza oficialmente en la plataforma, los datos relacionados con esa competición pueden ser eliminados permanentemente de nuestros servidores activos como parte de la higiene de datos y privacidad.</p>
+          <p><strong>Seguridad:</strong> Implementamos medidas técnicas para proteger la integridad de la información mientras la liga esté vigente.</p>
+        </section>
+        <section class="about-section">
+          <h2>¿Para quién es esta plataforma?</h2>
+          <p><strong>Empresas:</strong> Ideal para fomentar el team building y la sana competencia entre empleados durante torneos internacionales.</p>
+          <p><strong>Amigos y familias:</strong> Para mantener viva la rivalidad deportiva con un control automatizado de quién es el que mejor conoce el deporte.</p>
+          <p><strong>Asociaciones:</strong> Un valor agregado para miembros de clubes, fondos de empleados o comunidades sociales.</p>
+        </section>
+        <section class="about-section">
+          <h2>Salvedades adicionales</h2>
+          <p>Los resultados deportivos pueden depender de proveedores externos de datos, por lo que pueden existir retrasos, ajustes o correcciones posteriores a la finalización de los partidos.</p>
+          <p>El uso de la plataforma implica aceptar que cada organización o grupo privado es responsable de sus propias reglas internas, comunicaciones y acuerdos externos.</p>
+        </section>
+      </div>
+      <p class="about-rights">Todos los derechos reservados. Desarrollado por Kortiz © 2026.</p>
+    </div>
+  </div>
+
+  <div id="admin-user-modal" class="loading-overlay" hidden>
+    <div class="loading-card loading-card--form admin-modal-card">
+      <div class="guide-head">
+        <span class="section-title" id="admin-user-modal-title">Nuevo usuario</span>
+        <button id="admin-user-modal-close" type="button" class="icon-btn" aria-label="Cerrar usuario">×</button>
+      </div>
+      <p id="admin-user-modal-subtitle" class="page-sub">Define sus datos básicos y las ligas autorizadas.</p>
+      <form id="user-form" class="pred-form">
+        <input id="user-id" type="hidden" />
+        <label class="field-label">
+          <span class="field-title">Nombre</span>
+          <input id="user-name" class="field-input field-input--dark" />
+        </label>
+        <label class="field-label">
+          <span class="field-title">Correo</span>
+          <input id="user-email" type="email" class="field-input field-input--dark" />
+        </label>
+        <label class="field-label">
+          <span class="field-title">Contraseña</span>
+          <div class="password-wrap">
+            <input id="user-password" type="password" class="field-input field-input--dark" />
+            <button type="button" class="password-toggle" data-toggle-password="user-password">Ver</button>
+          </div>
+        </label>
+        <label class="field-label">
+          <span class="field-title">Acceso a ligas</span>
+          <select id="user-leagues" multiple class="field-input field-input--dark multi-select"></select>
+        </label>
+        <label class="toggle-row">
+          <input id="user-active" type="checkbox" checked />
+          <span>Usuario activo</span>
+        </label>
+        <div class="action-row">
+          <button type="submit" class="btn btn-cyan">Guardar usuario</button>
+          <button id="reset-user-form" type="button" class="btn btn-ghost">Limpiar</button>
+        </div>
+        <p id="user-status" class="status-msg"></p>
+      </form>
+    </div>
+  </div>
+
+  <div id="admin-league-modal" class="loading-overlay" hidden>
+    <div class="loading-card loading-card--form admin-modal-card">
+      <div class="guide-head">
+        <span class="section-title">Agregar liga</span>
+        <button id="admin-league-modal-close" type="button" class="icon-btn" aria-label="Cerrar liga">×</button>
+      </div>
+      <p class="page-sub">Crea una liga para tu organización y define las reglas de puntuación.</p>
+      <form id="admin-league-form" class="pred-form">
+        <label class="field-label">
+          <span class="field-title">Nombre de liga</span>
+          <input id="admin-league-name" class="field-input field-input--dark" />
+        </label>
+        <label class="field-label">
+          <span class="field-title">Competición</span>
+          <select id="admin-league-competition" class="field-input field-input--dark"></select>
+        </label>
+        <label class="field-label">
+          <span class="field-title">Temporada</span>
+          <input id="admin-league-season" type="number" min="2000" max="2100"
+            class="field-input field-input--dark" />
+        </label>
+        <label class="field-label">
+          <span class="field-title">Marcador válido para puntuar</span>
+          <select id="admin-league-score-mode" class="field-input field-input--dark">
+            <option value="regular_time">Tiempo reglamentario (90 min + reposición)</option>
+            <option value="full_time">Resultado final (incluye alargue/penales)</option>
+          </select>
+        </label>
+        <div class="form-grid-3">
+          <label class="field-label">
+            <span class="field-title">Puntos exacto</span>
+            <input id="admin-league-exact" type="number" min="1" max="20" class="field-input field-input--dark" />
+          </label>
+          <label class="field-label">
+            <span class="field-title">Puntos tendencia</span>
+            <input id="admin-league-outcome" type="number" min="0" max="20"
+              class="field-input field-input--dark" />
+          </label>
+          <label class="field-label">
+            <span class="field-title">Cierre (min)</span>
+            <input id="admin-league-lock" type="number" min="0" max="1440"
+              class="field-input field-input--dark" />
+          </label>
+        </div>
+        <button type="submit" class="btn btn-cyan">Crear liga</button>
+        <p id="admin-league-status" class="status-msg"></p>
+      </form>
+    </div>
+  </div>
+
   <div id="bulk-import-modal" class="loading-overlay" hidden>
     <div class="loading-card loading-card--form bulk-import-modal-card">
       <div class="guide-head">
@@ -800,7 +1010,7 @@
     <div class="loading-card loading-card--form prediction-modal-card">
       <div class="guide-head">
         <span class="section-title">Haz tu porra</span>
-        <button id="prediction-modal-close" type="button" class="icon-btn" aria-label="Cerrar apuesta">×</button>
+        <button id="prediction-modal-close" type="button" class="icon-btn" aria-label="Cerrar jugada">×</button>
       </div>
       <p id="prediction-modal-subtitle" class="page-sub"></p>
       <form id="prediction-modal-form" class="pred-form">
@@ -826,6 +1036,8 @@
   </div>
 
   <script src="theme.js"></script>
+  <script src="vendor/read-excel-file.min.js"></script>
+  <script src="vendor/write-excel-file.min.js"></script>
   <script src="dashboard.js"></script>
 </body>
 

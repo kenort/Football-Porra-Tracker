@@ -10,6 +10,9 @@ const loginStatus = document.getElementById("login-status");
 const forgotStatus = document.getElementById("forgot-status");
 const forgotPasswordTrigger = document.getElementById("forgot-password-trigger");
 const forgotBack = document.getElementById("forgot-back");
+const loginAboutTrigger = document.getElementById("login-about-trigger");
+const loginAboutModal = document.getElementById("login-about-modal");
+const loginAboutClose = document.getElementById("login-about-close");
 
 const setupName = document.getElementById("setup-name");
 const setupEmail = document.getElementById("setup-email");
@@ -77,6 +80,17 @@ forgotBack.addEventListener("click", () => {
   clearMessages();
   forgotBlock.hidden = true;
   loginBlock.hidden = false;
+});
+
+loginAboutTrigger?.addEventListener("click", () => {
+  if (!loginAboutModal) return;
+  loginAboutModal.hidden = false;
+});
+
+loginAboutClose?.addEventListener("click", closeLoginAbout);
+
+loginAboutModal?.addEventListener("click", (event) => {
+  if (event.target === loginAboutModal) closeLoginAbout();
 });
 
 async function initialize() {
@@ -151,4 +165,9 @@ function bindPasswordToggles() {
 function hideBootSplash() {
   if (!bootSplash) return;
   bootSplash.hidden = true;
+}
+
+function closeLoginAbout() {
+  if (!loginAboutModal) return;
+  loginAboutModal.hidden = true;
 }

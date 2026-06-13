@@ -2,6 +2,8 @@ const PAGE_SIZE = 20;
 const LEAGUE_STORAGE_KEY = "porra_active_league";
 const CACHE_META_KEY = "porra_cache_meta_v1";
 const CACHE_PREFIX = "porra_cache_v1";
+const ORGANIZATION_LOGO_MAX_BYTES = 512 * 1024;
+const ORGANIZATION_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 
 const appShell = document.getElementById("app-shell");
 const bootSplash = document.getElementById("boot-splash");
@@ -16,12 +18,18 @@ const betsNavBtn = document.getElementById("bets-nav-btn");
 const mobileMenuToggle = document.getElementById("mobile-menu-toggle");
 const topbarActions = document.getElementById("topbar-actions");
 const topbarBackdrop = document.getElementById("topbar-backdrop");
+const aboutTrigger = document.getElementById("about-trigger");
+const aboutModal = document.getElementById("about-modal");
+const aboutCloseBtn = document.getElementById("about-close");
+const organizationLogoSlot = document.getElementById("organization-logo-slot");
+const organizationLogoImg = document.getElementById("organization-logo-img");
 
 const competitionSelect = document.getElementById("competition");
 const seasonInput = document.getElementById("season");
 const exactPointsInput = document.getElementById("exact-points");
 const outcomePointsInput = document.getElementById("outcome-points");
 const lockMinutesInput = document.getElementById("lock-minutes");
+const scoreModeInput = document.getElementById("score-mode");
 const leagueNameInput = document.getElementById("league-name");
 const syncBtn = document.getElementById("sync-matches");
 const syncStatus = document.getElementById("sync-status");
@@ -79,6 +87,8 @@ const leaderboardBody = document.getElementById("leaderboard-body");
 const leaderboardPrevPageBtn = document.getElementById("leaderboard-prev-page");
 const leaderboardNextPageBtn = document.getElementById("leaderboard-next-page");
 const leaderboardPageInfo = document.getElementById("leaderboard-page-info");
+const leaderboardPageSizeInput = document.getElementById("leaderboard-page-size");
+const leaderboardTieAlert = document.getElementById("leaderboard-tie-alert");
 const standingsContainer = document.getElementById("standings-container");
 const standingsMetaEl = document.getElementById("standings-meta");
 const totalMatchesEl = document.getElementById("total-matches");
@@ -120,11 +130,24 @@ const auditRefreshBtn = document.getElementById("audit-refresh");
 const auditExportBtn = document.getElementById("audit-export");
 const auditStatus = document.getElementById("audit-status");
 const auditBody = document.getElementById("audit-body");
+const superadminResetRequestsBody = document.getElementById("superadmin-reset-requests-body");
+const superadminResetRequestStatus = document.getElementById("superadmin-reset-request-status");
+const superadminResultForm = document.getElementById("superadmin-result-form");
+const superadminResultMatch = document.getElementById("superadmin-result-match");
+const superadminResultHome = document.getElementById("superadmin-result-home");
+const superadminResultAway = document.getElementById("superadmin-result-away");
+const superadminResultStatus = document.getElementById("superadmin-result-status");
+const superadminResultsRefresh = document.getElementById("superadmin-results-refresh");
 const superadminNavButtons = [...document.querySelectorAll("[data-superadmin-view]")];
 const superadminSections = [...document.querySelectorAll("[data-superadmin-section]")];
 
 const adminPanel = document.getElementById("admin-panel");
 const adminEmptyPanel = document.getElementById("admin-empty-panel");
+const openUserModalBtn = document.getElementById("open-user-modal");
+const adminUserModal = document.getElementById("admin-user-modal");
+const adminUserModalCloseBtn = document.getElementById("admin-user-modal-close");
+const adminUserModalTitle = document.getElementById("admin-user-modal-title");
+const adminUserModalSubtitle = document.getElementById("admin-user-modal-subtitle");
 const userForm = document.getElementById("user-form");
 const userIdInput = document.getElementById("user-id");
 const userNameInput = document.getElementById("user-name");
@@ -152,7 +175,15 @@ const bulkImportPrevPageBtn = document.getElementById("bulk-import-prev-page");
 const bulkImportNextPageBtn = document.getElementById("bulk-import-next-page");
 const bulkImportPageInfo = document.getElementById("bulk-import-page-info");
 const bulkImportPreviewBody = document.getElementById("bulk-import-preview-body");
+const organizationLogoForm = document.getElementById("organization-logo-form");
+const organizationLogoFileInput = document.getElementById("organization-logo-file");
+const organizationLogoPreview = document.getElementById("organization-logo-preview");
+const organizationLogoDeleteBtn = document.getElementById("organization-logo-delete");
+const organizationLogoStatus = document.getElementById("organization-logo-status");
 
+const openLeagueModalBtn = document.getElementById("open-league-modal");
+const adminLeagueModal = document.getElementById("admin-league-modal");
+const adminLeagueModalCloseBtn = document.getElementById("admin-league-modal-close");
 const adminLeagueForm = document.getElementById("admin-league-form");
 const adminLeagueNameInput = document.getElementById("admin-league-name");
 const adminLeagueCompetitionInput = document.getElementById("admin-league-competition");
@@ -160,10 +191,15 @@ const adminLeagueSeasonInput = document.getElementById("admin-league-season");
 const adminLeagueExactInput = document.getElementById("admin-league-exact");
 const adminLeagueOutcomeInput = document.getElementById("admin-league-outcome");
 const adminLeagueLockInput = document.getElementById("admin-league-lock");
+const adminLeagueScoreModeInput = document.getElementById("admin-league-score-mode");
 const adminLeagueStatus = document.getElementById("admin-league-status");
 
 const usersBody = document.getElementById("users-body");
 const leaguesBody = document.getElementById("leagues-body");
+const adminUserSearchInput = document.getElementById("admin-user-search");
+const usersPrevPageBtn = document.getElementById("users-prev-page");
+const usersNextPageBtn = document.getElementById("users-next-page");
+const usersPageInfo = document.getElementById("users-page-info");
 const deleteAllUsersBtn = document.getElementById("delete-all-users");
 const deleteAllLeaguesBtn = document.getElementById("delete-all-leagues");
 const resetRequestsBody = document.getElementById("reset-requests-body");
@@ -203,23 +239,30 @@ let appState = createInitialState();
 let currentPage = 1;
 let adminBetsPage = 1;
 let leaderboardPage = 1;
+let leaderboardPageSize = 10;
 let activeView = "resumen";
 let activeSuperadminSection = "organizations";
 let pendingDeleteAction = null;
 let auditLogs = [];
 let temporaryPasswordNotice = "";
+let superadminTemporaryPasswordNotice = "";
+let superadminFinishedMatches = [];
 let activePredictionModalMatchId = "";
 let predictionModalCloseTimer = null;
 let predictionMutationInFlight = false;
 let bulkImportPreviewState = null;
 let bulkImportPage = 1;
 let bulkImportPageSize = 10;
+let adminUsersPage = 1;
+let adminUserQuery = "";
+let lastSmallScreenState = null;
 const filters = {
   teamQuery: "",
   stage: "",
   dateFrom: "",
   dateTo: "",
 };
+const activeMatchSubgroups = {};
 const adminBetsFilters = {
   matchId: "",
   userQuery: "",
@@ -280,7 +323,9 @@ const COUNTRY_NAME_ALIASES = {
   "czech republic": "CZ",
   "ivory coast": "CI",
   "cote d'ivoire": "CI",
+  "cote d’ivoire": "CI",
   "côte d'ivoire": "CI",
+  "côte d’ivoire": "CI",
   "new zealand": "NZ",
   "the netherlands": "NL",
   netherlands: "NL",
@@ -387,15 +432,15 @@ const GUIDE_CONTENT = {
       view: "Partidos",
       points: [
         "Consulta calendario, estado de los partidos y cantidad de porras registradas por encuentro.",
-        "Cada fila resume el partido sin saturarte con cientos de apuestas al mismo tiempo.",
-        "Desde aquí puedes saltar al detalle de apuestas del partido que te interese revisar.",
+        "Cada fila resume el partido sin saturarte con cientos de jugadas al mismo tiempo.",
+        "Desde aquí puedes saltar al detalle de jugadas del partido que te interese revisar.",
       ],
     },
     {
       view: "Porras",
       points: [
-        "Explora las apuestas por partido con filtros por usuario y por tendencia.",
-        "Revisa rápidamente cuántos apostaron local, empate o visita.",
+        "Explora las jugadas por partido con filtros por usuario y por tendencia.",
+        "Revisa rápidamente cuántos jugaron local, empate o visita.",
         "Esta vista está pensada para manejar cientos de asociados sin perder claridad.",
       ],
     },
@@ -414,7 +459,7 @@ const GUIDE_CONTENT = {
       points: [
         "Consulta rápidamente la liga activa, sus reglas y el estado general del torneo.",
         "Revisa partidos totales, finalizados y cuántas porras llevas registradas.",
-        "Usa esta vista como punto de entrada antes de empezar a apostar.",
+        "Usa esta vista como punto de entrada antes de empezar a jugar.",
       ],
     },
     {
@@ -469,6 +514,7 @@ logoutBtn.addEventListener("click", async () => {
 leagueSwitcher.addEventListener("change", async () => {
   const leagueId = leagueSwitcher.value || "";
   if (!leagueId) return;
+  leaderboardPage = 1;
   localStorage.setItem(LEAGUE_STORAGE_KEY, leagueId);
   const cachedState = readCachedStateByLeagueId(leagueId);
   if (cachedState) {
@@ -497,6 +543,73 @@ syncBtn.addEventListener("click", async () => {
   await syncLeagueById(appState.currentLeague.id);
 });
 
+organizationLogoFileInput?.addEventListener("change", () => {
+  const file = organizationLogoFileInput.files?.[0] || null;
+  if (!file) {
+    renderOrganizationLogoAdmin();
+    return;
+  }
+  const validationError = validateOrganizationLogoFile(file);
+  if (validationError) {
+    organizationLogoStatus.textContent = validationError;
+    organizationLogoStatus.classList.add("status-msg--error");
+    organizationLogoFileInput.value = "";
+    renderOrganizationLogoAdmin();
+    return;
+  }
+  organizationLogoStatus.textContent = "Vista previa lista. Guarda para publicarla en tu organización.";
+  organizationLogoStatus.classList.remove("status-msg--error");
+  renderOrganizationLogoPreview(URL.createObjectURL(file), file.name);
+});
+
+organizationLogoForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (appState.viewer?.role !== "admin") return;
+  const file = organizationLogoFileInput?.files?.[0] || null;
+  const validationError = validateOrganizationLogoFile(file);
+  if (validationError) {
+    organizationLogoStatus.textContent = validationError;
+    organizationLogoStatus.classList.add("status-msg--error");
+    return;
+  }
+
+  try {
+    setLoading(true, "Guardando imagen...");
+    organizationLogoStatus.classList.remove("status-msg--error");
+    const data = await readFileAsDataUrl(file);
+    await postJson("/api/admin/organization/logo", {
+      fileName: file.name,
+      contentType: file.type,
+      data,
+    });
+    organizationLogoForm.reset();
+    organizationLogoStatus.textContent = "Imagen guardada para tu organización.";
+    await refreshApp(appState.currentLeague?.id || "");
+  } catch (error) {
+    organizationLogoStatus.textContent = error.message;
+    organizationLogoStatus.classList.add("status-msg--error");
+  } finally {
+    setLoading(false);
+  }
+});
+
+organizationLogoDeleteBtn?.addEventListener("click", async () => {
+  if (appState.viewer?.role !== "admin") return;
+  try {
+    setLoading(true, "Quitando imagen...");
+    organizationLogoStatus.classList.remove("status-msg--error");
+    await deleteJson("/api/admin/organization/logo");
+    if (organizationLogoForm) organizationLogoForm.reset();
+    organizationLogoStatus.textContent = "Imagen eliminada de la organización.";
+    await refreshApp(appState.currentLeague?.id || "");
+  } catch (error) {
+    organizationLogoStatus.textContent = error.message;
+    organizationLogoStatus.classList.add("status-msg--error");
+  } finally {
+    setLoading(false);
+  }
+});
+
 async function syncLeagueById(leagueId) {
   if (appState.viewer?.role !== "admin" || !leagueId) return;
   try {
@@ -505,7 +618,8 @@ async function syncLeagueById(leagueId) {
     setStatus("Sincronizando partidos y tabla...");
     const response = await postJson(`/api/admin/sync/${encodeURIComponent(leagueId)}`, {});
     await refreshApp(leagueId);
-    setStatus(`Sincronización completada. ${response.matchesCount} partidos y ${response.standingsCount} tabla(s).`);
+    const action = response.reusedSharedData ? "Datos compartidos cargados" : "Sincronización completada";
+    setStatus(`${action}. ${response.matchesCount} partidos y ${response.standingsCount} tabla(s).`);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -620,11 +734,17 @@ leaderboardPrevPageBtn?.addEventListener("click", () => {
 });
 
 leaderboardNextPageBtn?.addEventListener("click", () => {
-  const totalPages = Math.max(1, Math.ceil((appState.currentLeague?.leaderboard || []).length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil((appState.currentLeague?.leaderboard || []).length / leaderboardPageSize));
   if (leaderboardPage < totalPages) {
     leaderboardPage += 1;
     renderLeaderboard();
   }
+});
+
+leaderboardPageSizeInput?.addEventListener("change", () => {
+  leaderboardPageSize = normalizeLeaderboardPageSize(leaderboardPageSizeInput.value);
+  leaderboardPage = 1;
+  renderLeaderboard();
 });
 
 matchesBody.addEventListener("click", (event) => {
@@ -640,7 +760,11 @@ function handleMatchInteraction(event) {
   if (subgroupButton) {
     const parentList = subgroupButton.closest(".match-group-list");
     if (parentList) {
-      activateSubgroupTab(parentList, subgroupButton.dataset.subgroupTab || "");
+      const subgroupId = subgroupButton.dataset.subgroupTab || "";
+      if (parentList.dataset.subgroupGroup) {
+        activeMatchSubgroups[parentList.dataset.subgroupGroup] = subgroupId;
+      }
+      activateSubgroupTab(parentList, subgroupId);
     }
     return;
   }
@@ -765,19 +889,34 @@ userForm.addEventListener("submit", async (event) => {
     }
     resetUserForm();
     await refreshApp(appState.currentLeague?.id || "");
+    closeAdminUserModal();
   } catch (error) {
     userStatus.textContent = error.message;
   }
 });
 
-resetUserFormBtn.addEventListener("click", resetUserForm);
+resetUserFormBtn.addEventListener("click", () => {
+  resetUserForm();
+  updateAdminUserModalCopy();
+});
+
+openUserModalBtn?.addEventListener("click", () => {
+  resetUserForm();
+  openAdminUserModal();
+});
+
+adminUserModalCloseBtn?.addEventListener("click", closeAdminUserModal);
+
+adminUserModal?.addEventListener("click", (event) => {
+  if (event.target === adminUserModal) closeAdminUserModal();
+});
 
 downloadImportTemplateBtn?.addEventListener("click", async () => {
   try {
     ensureBulkImportHasLeagues();
-    setLoading(true, "Generando plantilla...");
+    setLoading(true, "Generando plantilla Excel...");
     const csv = await getText("/api/admin/users/import-template");
-    downloadCsvFile(csv, "plantilla-carga-usuarios.csv");
+    await downloadExcelFromCsv(csv, "plantilla-carga-usuarios.xlsx", "Usuarios");
   } catch (error) {
     if (bulkImportStatus) bulkImportStatus.textContent = error.message;
   } finally {
@@ -789,7 +928,7 @@ bulkImportPreviewBtn?.addEventListener("click", async () => {
   if (appState.viewer?.role !== "admin") return;
   try {
     ensureBulkImportHasLeagues();
-    const csvText = await readBulkImportFile();
+    const csvText = await readBulkImportExcelFile();
     setLoading(true, "Validando archivo...");
     const result = await postJson("/api/admin/users/import-preview", { csvText });
     bulkImportPreviewState = { csvText, ...result };
@@ -815,7 +954,7 @@ bulkImportConfirmBtn?.addEventListener("click", async () => {
     setLoading(true, "Importando usuarios...");
     const result = await postJson("/api/admin/users/import-commit", { csvText: bulkImportPreviewState.csvText });
     if (result.reportCsv) {
-      downloadCsvFile(result.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.csv`);
+      await downloadExcelFromCsv(result.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.xlsx`, "Resultado");
     }
     closeBulkImportModal();
     clearBulkImportState();
@@ -830,12 +969,16 @@ bulkImportConfirmBtn?.addEventListener("click", async () => {
   }
 });
 
-bulkImportExportBtn?.addEventListener("click", () => {
+bulkImportExportBtn?.addEventListener("click", async () => {
   if (!bulkImportPreviewState?.reportCsv) {
     if (bulkImportStatus) bulkImportStatus.textContent = "No hay resultado para exportar todavía.";
     return;
   }
-  downloadCsvFile(bulkImportPreviewState.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.csv`);
+  try {
+    await downloadExcelFromCsv(bulkImportPreviewState.reportCsv, `resultado-carga-usuarios-${new Date().toISOString().slice(0, 10)}.xlsx`, "Resultado");
+  } catch (error) {
+    if (bulkImportStatus) bulkImportStatus.textContent = error.message;
+  }
 });
 
 bulkImportOpenPreviewBtn?.addEventListener("click", () => {
@@ -906,7 +1049,23 @@ usersBody.addEventListener("click", (event) => {
     option.selected = (user.leagueIds || []).includes(option.value);
   });
   userStatus.textContent = `Editando a ${user.displayName}.`;
-  setActiveView("admin");
+  openAdminUserModal();
+});
+
+adminUserSearchInput?.addEventListener("input", () => {
+  adminUserQuery = adminUserSearchInput.value.trim();
+  adminUsersPage = 1;
+  renderUsersTable();
+});
+
+usersPrevPageBtn?.addEventListener("click", () => {
+  adminUsersPage = Math.max(1, adminUsersPage - 1);
+  renderUsersTable();
+});
+
+usersNextPageBtn?.addEventListener("click", () => {
+  adminUsersPage += 1;
+  renderUsersTable();
 });
 
 deleteAllUsersBtn?.addEventListener("click", () => {
@@ -930,20 +1089,34 @@ resetRequestsBody.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-issue-temporary]");
   if (!button) return;
 
+  await issueTemporaryPasswordFromRequest(button.dataset.issueTemporary, resetRequestStatus, () => {
+    temporaryPasswordNotice = resetRequestStatus.textContent;
+  });
+});
+
+superadminResetRequestsBody?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-issue-temporary]");
+  if (!button) return;
+
+  await issueTemporaryPasswordFromRequest(button.dataset.issueTemporary, superadminResetRequestStatus, () => {
+    superadminTemporaryPasswordNotice = superadminResetRequestStatus.textContent;
+  });
+});
+
+async function issueTemporaryPasswordFromRequest(requestId, statusElement, afterSuccess = null) {
   try {
     setLoading(true, "Generando contraseña temporal...");
     const result = await postJson(
-      `/api/admin/password-reset-requests/${encodeURIComponent(button.dataset.issueTemporary)}/issue-temporary`,
+      `/api/admin/password-reset-requests/${encodeURIComponent(requestId)}/issue-temporary`,
       {},
     );
-    temporaryPasswordNotice = `Contraseña temporal: ${result.temporaryPassword}`;
-    resetRequestStatus.textContent = temporaryPasswordNotice;
+    statusElement.textContent = `Contraseña temporal para ${result.email}: ${result.temporaryPassword}`;
+    if (typeof afterSuccess === "function") afterSuccess(result);
     await refreshApp(appState.currentLeague?.id || "");
   } catch (error) {
-    temporaryPasswordNotice = error.message;
-    resetRequestStatus.textContent = temporaryPasswordNotice;
+    statusElement.textContent = error.message;
   }
-});
+}
 
 adminLeagueForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -955,6 +1128,7 @@ adminLeagueForm.addEventListener("submit", async (event) => {
     const response = await postJson("/api/admin/leagues", payload);
     adminLeagueStatus.textContent = "Liga creada.";
     adminLeagueForm.reset();
+    closeAdminLeagueModal();
     if (response?.league?.id) {
       localStorage.setItem(LEAGUE_STORAGE_KEY, response.league.id);
       await refreshApp(response.league.id);
@@ -964,6 +1138,21 @@ adminLeagueForm.addEventListener("submit", async (event) => {
   } catch (error) {
     adminLeagueStatus.textContent = error.message;
   }
+});
+
+openLeagueModalBtn?.addEventListener("click", () => {
+  adminLeagueForm?.reset();
+  if (adminLeagueSeasonInput && !adminLeagueSeasonInput.value) {
+    adminLeagueSeasonInput.value = String(new Date().getFullYear());
+  }
+  if (adminLeagueStatus) adminLeagueStatus.textContent = "";
+  openAdminLeagueModal();
+});
+
+adminLeagueModalCloseBtn?.addEventListener("click", closeAdminLeagueModal);
+
+adminLeagueModal?.addEventListener("click", (event) => {
+  if (event.target === adminLeagueModal) closeAdminLeagueModal();
 });
 
 deleteAllLeaguesBtn?.addEventListener("click", () => {
@@ -1154,6 +1343,7 @@ async function loadLeagueVisualAssets() {
     appState.currentLeague.teamAssets = payload?.assets && typeof payload.assets === "object" ? payload.assets : {};
     mergeMatchGroups(payload?.matchGroups);
     renderMatches();
+    renderStandings();
     persistCache();
   } catch (error) {
     console.warn("No se pudieron cargar assets de equipos:", error);
@@ -1245,6 +1435,7 @@ function render() {
   viewerName.textContent = appState.viewer.displayName;
   viewerRole.textContent = role.toUpperCase();
   if (guideTrigger) guideTrigger.hidden = !role;
+  renderOrganizationLogoTopbar();
 
   leagueSwitcher.closest(".topbar-select").hidden = !leagueMode;
   leagueSwitcher.disabled = !leagueMode || !appState.leagues.length;
@@ -1375,7 +1566,7 @@ function renderLeagueSummary() {
     ? `Última sincronización: ${formatDateTime(league.lastSyncAt)}`
     : "Sin sincronización todavía";
   rulesSummaryEl.textContent =
-    `Exacto ${league.exactPoints} pts · tendencia ${league.outcomePoints} pts · cierre ${league.lockMinutes} min`;
+    `Exacto ${league.exactPoints} pts · tendencia ${league.outcomePoints} pts · cierre ${league.lockMinutes} min · ${scoreModeLabel(league.scoreMode)}`;
 
   leagueNameInput.value = league.name || "";
   competitionSelect.value = league.competitionCode || "";
@@ -1383,6 +1574,7 @@ function renderLeagueSummary() {
   exactPointsInput.value = String(league.exactPoints || "");
   outcomePointsInput.value = String(league.outcomePoints || "");
   lockMinutesInput.value = String(league.lockMinutes || "");
+  scoreModeInput.value = league.scoreMode || "regular_time";
 
   setLeagueSettingsEnabled(false);
 }
@@ -1394,13 +1586,23 @@ function renderProfileForm() {
 }
 
 function setLeagueSettingsEnabled(enabled) {
-  [leagueNameInput, competitionSelect, seasonInput, exactPointsInput, outcomePointsInput, lockMinutesInput].forEach(
+  [leagueNameInput, competitionSelect, seasonInput, exactPointsInput, outcomePointsInput, lockMinutesInput, scoreModeInput].forEach(
     (input) => {
       input.disabled = true;
       input.readOnly = true;
     },
   );
   syncBtn.disabled = !enabled;
+}
+
+function scoreModeLabel(mode) {
+  return mode === "full_time"
+    ? "Resultado final con alargue/penales"
+    : "Tiempo reglamentario";
+}
+
+function scoreModeShortLabel(mode) {
+  return mode === "full_time" ? "Final" : "90 min";
 }
 
 function renderMembers() {
@@ -1522,12 +1724,12 @@ function syncPredictionModalState() {
     predictionModalHomeInput.value = "";
     predictionModalAwayInput.value = "";
     predictionModalDeleteBtn.disabled = true;
-    predictionModalSubtitle.textContent = "Selecciona un partido para registrar tu apuesta.";
+    predictionModalSubtitle.textContent = "Selecciona un partido para registrar tu jugada.";
     setPredictionModalMessage("Selecciona un partido para hacer tu porra.");
     return;
   }
 
-  predictionModalSubtitle.textContent = `${formatDateTime(match.utcDate)} · ${match.canPredict ? "Apuestas abiertas" : "Apuestas cerradas"}`;
+  predictionModalSubtitle.textContent = `${formatDateTime(match.utcDate)} · ${match.canPredict ? "Jugadas abiertas" : "Jugadas cerradas"}`;
   predictionModalHomeTeam.innerHTML = renderTeamLineHtml(match.homeTeam, "home");
   predictionModalAwayTeam.innerHTML = renderTeamLineHtml(match.awayTeam, "away");
   predictionModalDeleteBtn.disabled = !prediction;
@@ -1542,8 +1744,8 @@ function syncPredictionModalState() {
   predictionModalHomeInput.value = "";
   predictionModalAwayInput.value = "";
   setPredictionModalMessage(match.canPredict
-    ? `Puedes apostar hasta ${formatDateTime(match.lockedAt)}.`
-    : "Este partido ya cerró las apuestas.");
+    ? `Puedes jugar hasta ${formatDateTime(match.lockedAt)}.`
+    : "Este partido ya cerró las jugadas.");
 }
 
 function setPredictionModalPending(isPending) {
@@ -1621,6 +1823,7 @@ function renderMobileMatchGroups(matches, isAdmin) {
 
   matchesGroups.innerHTML = "";
   groups.forEach((group, index) => {
+    const groupKey = buildMatchSubgroupStateKey(group.label);
     const block = document.createElement("details");
     block.className = "match-group";
     block.open = index === 0;
@@ -1635,12 +1838,18 @@ function renderMobileMatchGroups(matches, isAdmin) {
     `;
     const list = block.querySelector(".match-group-list");
     if (group.subgroups?.length) {
-      list.innerHTML = renderSubgroupButtons(group.subgroups);
-      group.subgroups.forEach((subgroup, subgroupIndex) => {
+      list.dataset.subgroupGroup = groupKey;
+      const fallbackSubgroupId = group.subgroups[0]?.id || "";
+      const activeSubgroupId = group.subgroups.some((subgroup) => subgroup.id === activeMatchSubgroups[groupKey])
+        ? activeMatchSubgroups[groupKey]
+        : fallbackSubgroupId;
+      activeMatchSubgroups[groupKey] = activeSubgroupId;
+      list.innerHTML = renderSubgroupButtons(group.subgroups, activeSubgroupId);
+      group.subgroups.forEach((subgroup) => {
         const panel = document.createElement("div");
         panel.className = `match-subgroup-panel ${getStageLayoutClass(group.label)}`.trim();
         panel.dataset.subgroupPanel = subgroup.id;
-        panel.hidden = subgroupIndex !== 0;
+        panel.hidden = subgroup.id !== activeSubgroupId;
         subgroup.matches.forEach((match) => {
           panel.appendChild(createMobileMatchCard(match, isAdmin));
         });
@@ -1656,6 +1865,13 @@ function renderMobileMatchGroups(matches, isAdmin) {
     }
     matchesGroups.appendChild(block);
   });
+}
+
+function buildMatchSubgroupStateKey(stageLabel) {
+  return [
+    appState.currentLeague?.id || "sin-liga",
+    normalizeText(stageLabel || "sin-fase"),
+  ].join(":");
 }
 
 function createMobileMatchCard(match, isAdmin) {
@@ -1679,19 +1895,22 @@ function createMobileMatchCard(match, isAdmin) {
   return card;
 }
 
-function renderSubgroupButtons(subgroups) {
+function renderSubgroupButtons(subgroups, activeSubgroupId = subgroups[0]?.id || "") {
   return `
     <div class="match-subgroup-tabs" role="tablist" aria-label="Grupos de la fase">
-      ${subgroups.map((subgroup, index) => `
+      ${subgroups.map((subgroup) => {
+        const isActive = subgroup.id === activeSubgroupId;
+        return `
         <button
           type="button"
-          class="match-subgroup-tab${index === 0 ? " is-active" : ""}"
+          class="match-subgroup-tab${isActive ? " is-active" : ""}"
           data-subgroup-tab="${escapeHtml(subgroup.id)}"
-          aria-pressed="${index === 0 ? "true" : "false"}"
+          aria-pressed="${isActive ? "true" : "false"}"
         >
           ${escapeHtml(subgroup.label)}
         </button>
-      `).join("")}
+      `;
+      }).join("")}
     </div>
   `;
 }
@@ -1769,7 +1988,7 @@ function mergeMatchGroups(matchGroups) {
   if (!appState.currentLeague?.matches?.length || !matchGroups || typeof matchGroups !== "object") return;
   appState.currentLeague.matches = appState.currentLeague.matches.map((match) => ({
     ...match,
-    subgroupLabel: matchGroups[String(match.sourceMatchId)] || match.subgroupLabel || "",
+    subgroupLabel: match.subgroupLabel || match.groupLabel || matchGroups[String(match.sourceMatchId)] || "",
   }));
 }
 
@@ -1781,7 +2000,7 @@ function mergeCachedMatchMetadata(cachedMatches) {
     if (!cached) return match;
     return {
       ...match,
-      subgroupLabel: cached.subgroupLabel || match.subgroupLabel || "",
+      subgroupLabel: match.subgroupLabel || match.groupLabel || cached.subgroupLabel || cached.groupLabel || "",
     };
   });
 }
@@ -1830,14 +2049,15 @@ function renderMatchPredictionSummary(match, predictions, isAdmin) {
       <div class="match-card-cta">
         <span class="muted">${match.canPredict ? "Aún no has hecho tu porra." : "Sin porra registrada."}</span>
         ${match.canPredict
-          ? `<button type="button" class="btn btn-ghost btn-xs match-card-action" data-open-prediction-modal="${escapeHtml(match.id)}">Apostar</button>`
+          ? `<button type="button" class="btn btn-ghost btn-xs match-card-action" data-open-prediction-modal="${escapeHtml(match.id)}">Jugar</button>`
           : ""}
       </div>
     `;
   }
 
   return predictions.map((prediction) => {
-    const pointsText = match.isFinished ? ` · ${prediction.pointsAwarded} pts` : "";
+    const pointsAwarded = resolvePredictionPoints(prediction, match);
+    const pointsText = match.isFinished ? ` · ${pointsAwarded} pts` : "";
     const edit = appState.viewer?.role === "user" && match.canPredict
       ? `<button type="button" class="btn btn-ghost btn-xs match-card-action" data-open-prediction-modal="${escapeHtml(match.id)}">Editar porra</button>`
       : "";
@@ -1848,6 +2068,26 @@ function renderMatchPredictionSummary(match, predictions, isAdmin) {
       </div>
     `;
   }).join("");
+}
+
+function resolvePredictionPoints(prediction, match) {
+  if (!match?.isFinished) return 0;
+  if (Number.isFinite(Number(prediction?.pointsAwarded))) return Number(prediction.pointsAwarded);
+  return calculatePredictionPoints(prediction, match, appState.currentLeague);
+}
+
+function calculatePredictionPoints(prediction, match, league) {
+  if (!prediction || !match || !league) return 0;
+  if (match.scoreHome == null || match.scoreAway == null) return 0;
+  const predictedHome = Number(prediction.homeGoals);
+  const predictedAway = Number(prediction.awayGoals);
+  const scoreHome = Number(match.scoreHome);
+  const scoreAway = Number(match.scoreAway);
+  if (![predictedHome, predictedAway, scoreHome, scoreAway].every(Number.isFinite)) return 0;
+  if (predictedHome === scoreHome && predictedAway === scoreAway) return Number(league.exactPoints || 0);
+  return Math.sign(predictedHome - predictedAway) === Math.sign(scoreHome - scoreAway)
+    ? Number(league.outcomePoints || 0)
+    : 0;
 }
 
 function renderMatches() {
@@ -1954,7 +2194,7 @@ function renderAdminBetsExplorer() {
   adminBetsBody.innerHTML = "";
 
   if (!selectedMatch) {
-    adminBetsMeta.textContent = "Selecciona un partido para revisar cómo apostaron tus usuarios.";
+    adminBetsMeta.textContent = "Selecciona un partido para revisar cómo jugaron tus usuarios.";
     adminBetsBody.innerHTML = '<tr><td colspan="5">No hay un partido seleccionado.</td></tr>';
     adminBetsPageInfo.textContent = "Página 1 de 1";
     adminBetsPrevPageBtn.disabled = true;
@@ -1983,7 +2223,7 @@ function renderAdminBetsExplorer() {
       <td>${escapeHtml(prediction.email || "Sin correo")}</td>
       <td>${prediction.homeGoals}-${prediction.awayGoals}</td>
       <td>${predictionOutcomeLabel(prediction)}</td>
-      <td>${selectedMatch.isFinished ? prediction.pointsAwarded : "-"}</td>
+      <td>${selectedMatch.isFinished ? resolvePredictionPoints(prediction, selectedMatch) : "-"}</td>
     `;
     adminBetsBody.appendChild(row);
   });
@@ -2057,47 +2297,75 @@ function getFilteredMatches() {
 function renderLeaderboard() {
   leaderboardBody.innerHTML = "";
   const leaderboard = appState.currentLeague?.leaderboard || [];
+  leaderboardPageSize = normalizeLeaderboardPageSize(leaderboardPageSize);
+  if (leaderboardPageSizeInput) leaderboardPageSizeInput.value = String(leaderboardPageSize);
   if (appState.currentLeague?.leaderboardDeferred) {
-    leaderboardBody.innerHTML = '<tr><td colspan="5">Cargando ranking...</td></tr>';
+    updateLeaderboardTieAlert([]);
+    leaderboardBody.innerHTML = '<tr><td colspan="8">Cargando ranking...</td></tr>';
     if (leaderboardPageInfo) leaderboardPageInfo.textContent = "Actualizando";
     if (leaderboardPrevPageBtn) leaderboardPrevPageBtn.disabled = true;
     if (leaderboardNextPageBtn) leaderboardNextPageBtn.disabled = true;
     return;
   }
   if (!leaderboard.length) {
-    leaderboardBody.innerHTML = '<tr><td colspan="5">No hay ranking disponible aún.</td></tr>';
+    updateLeaderboardTieAlert([]);
+    leaderboardBody.innerHTML = '<tr><td colspan="8">No hay ranking disponible aún.</td></tr>';
     if (leaderboardPageInfo) leaderboardPageInfo.textContent = "Página 1 de 1";
     if (leaderboardPrevPageBtn) leaderboardPrevPageBtn.disabled = true;
     if (leaderboardNextPageBtn) leaderboardNextPageBtn.disabled = true;
     return;
   }
+  updateLeaderboardTieAlert(leaderboard);
 
-  const totalPages = Math.max(1, Math.ceil(leaderboard.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(leaderboard.length / leaderboardPageSize));
   if (leaderboardPage > totalPages) leaderboardPage = totalPages;
-  const pageEntries = leaderboard.slice((leaderboardPage - 1) * PAGE_SIZE, leaderboardPage * PAGE_SIZE);
+  const start = (leaderboardPage - 1) * leaderboardPageSize;
+  const pageEntries = leaderboard.slice(start, start + leaderboardPageSize);
 
   pageEntries.forEach((entry, index) => {
-    const absoluteIndex = (leaderboardPage - 1) * PAGE_SIZE + index;
+    const absoluteIndex = start + index;
+    const displayRank = Number.isFinite(Number(entry.rank)) ? Number(entry.rank) : absoluteIndex + 1;
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${absoluteIndex + 1}</td>
+      <td>${displayRank}</td>
       <td>${escapeHtml(entry.displayName)}</td>
-      <td>${entry.predictionsCount}</td>
-      <td>${entry.exactHits}</td>
       <td>${entry.points}</td>
+      <td>${entry.exactHits || 0}</td>
+      <td>${entry.trendHits || 0}</td>
+      <td>${entry.predictionsCount}</td>
+      <td>${entry.finalMatchPoints || 0}</td>
+      <td>${entry.technicalTie ? '<span class="badge wait">Empate técnico</span>' : '<span class="muted">Definido</span>'}</td>
     `;
     leaderboardBody.appendChild(row);
   });
 
-  if (leaderboardPageInfo) leaderboardPageInfo.textContent = `Página ${leaderboardPage} de ${totalPages}`;
+  if (leaderboardPageInfo) {
+    const visibleFrom = leaderboard.length ? start + 1 : 0;
+    const visibleTo = Math.min(start + leaderboardPageSize, leaderboard.length);
+    leaderboardPageInfo.textContent = `Página ${leaderboardPage} de ${totalPages} · ${visibleFrom}-${visibleTo} de ${leaderboard.length}`;
+  }
   if (leaderboardPrevPageBtn) leaderboardPrevPageBtn.disabled = leaderboardPage <= 1;
   if (leaderboardNextPageBtn) leaderboardNextPageBtn.disabled = leaderboardPage >= totalPages;
+}
+
+function normalizeLeaderboardPageSize(value) {
+  const pageSize = Number(value);
+  return [10, 30, 50].includes(pageSize) ? pageSize : 10;
+}
+
+function updateLeaderboardTieAlert(leaderboard) {
+  if (!leaderboardTieAlert) return;
+  const tiedCount = leaderboard.filter((entry) => entry.technicalTie).length;
+  leaderboardTieAlert.hidden = tiedCount === 0;
+  leaderboardTieAlert.textContent = tiedCount
+    ? `Empate técnico activo: ${tiedCount} participante(s) siguen empatados después de aplicar puntos, marcadores exactos, tendencias, porras realizadas y puntos en la final. El desempate final debe resolverse con el mecanismo externo definido.`
+    : "";
 }
 
 function renderStandings() {
   standingsContainer.innerHTML = "";
   standingsMetaEl.textContent = "";
-  const standings = appState.currentLeague?.standings || [];
+  const standings = getDisplayStandings();
 
   if (!standings.length) {
     standingsContainer.innerHTML = '<p class="muted">No hay tabla disponible para esta liga.</p>';
@@ -2133,7 +2401,7 @@ function renderStandings() {
             .map((row) => `
               <tr>
                 <td>${row.position}</td>
-                <td>${escapeHtml(row.team)}</td>
+                <td>${escapeHtml(formatTeamName(row.team))}</td>
                 <td>${row.playedGames}</td>
                 <td>${row.won}</td>
                 <td>${row.draw}</td>
@@ -2150,6 +2418,70 @@ function renderStandings() {
     group.appendChild(wrap);
     standingsContainer.appendChild(group);
   });
+}
+
+function getDisplayStandings() {
+  const standings = appState.currentLeague?.standings || [];
+  const reconstructed = reconstructGroupedStandings(standings);
+  return reconstructed.length ? reconstructed : standings;
+}
+
+function reconstructGroupedStandings(standings) {
+  const groupTeams = buildMatchTeamGroups();
+  if (groupTeams.length <= 1) return [];
+  const globalTotal = standings.find((standing) => {
+    const label = normalizeText(standing.label || "");
+    const rows = standing.rows || [];
+    return rows.length > 8 &&
+      label.includes("fase de grupos") &&
+      label.includes("general") &&
+      !/grupo\s+[a-z0-9]+/i.test(String(standing.label || ""));
+  });
+  if (!globalTotal) return [];
+
+  return groupTeams
+    .map((group) => {
+      const rows = (globalTotal.rows || []).filter((row) => {
+        const aliases = [
+          normalizeText(row.team),
+          normalizeText(formatTeamName(row.team)),
+        ].filter(Boolean);
+        return aliases.some((alias) => group.teams.has(alias));
+      });
+      if (!rows.length) return null;
+      const hasPlayedGames = rows.some((row) => Number(row.playedGames || 0) > 0);
+      const orderedRows = hasPlayedGames ? [...rows].sort(compareStandingRows) : rows;
+      return {
+        ...globalTotal,
+        label: `${group.label} · General`,
+        rows: orderedRows.map((row, index) => ({ ...row, position: index + 1 })),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildMatchTeamGroups() {
+  const groups = new Map();
+  (appState.currentLeague?.matches || []).forEach((match) => {
+    const label = resolveMatchSubgroupLabel(match, []);
+    if (!label) return;
+    const entry = groups.get(label) || { label, teams: new Set() };
+    [match.homeTeam, match.awayTeam].forEach((team) => {
+      [team, formatTeamName(team)]
+        .map((value) => normalizeText(value))
+        .filter(Boolean)
+        .forEach((alias) => entry.teams.add(alias));
+    });
+    groups.set(label, entry);
+  });
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, "es"));
+}
+
+function compareStandingRows(left, right) {
+  return Number(right.points || 0) - Number(left.points || 0) ||
+    Number(right.goalDifference || 0) - Number(left.goalDifference || 0) ||
+    Number(right.goalsFor || 0) - Number(left.goalsFor || 0) ||
+    String(left.team || "").localeCompare(String(right.team || ""), "es");
 }
 
 function renderStats() {
@@ -2180,7 +2512,7 @@ function renderStats() {
     applyStatsConfig([
       { icon: "PT", tag: "PUNTOS", name: "Puntos totales", tone: "cyan" },
       { icon: "#", tag: "RANK", name: "Posición actual", tone: "green" },
-      { icon: "A", tag: "ABIERTAS", name: "Partidos por apostar", tone: "orange" },
+      { icon: "A", tag: "ABIERTAS", name: "Partidos por jugar", tone: "orange" },
     ]);
     totalMatchesEl.textContent = String(currentEntry?.points || 0);
     finishedMatchesEl.textContent = position >= 0 ? String(position + 1) : "-";
@@ -2232,6 +2564,7 @@ function renderAdmin() {
   if (role === "superadmin") {
     renderOrganizations();
     renderAdminsTable();
+    renderSuperadminResetRequestsTable();
     renderAuditFilter();
     renderAuditLogs();
     renderSuperadminOrganizationOptions();
@@ -2245,7 +2578,71 @@ function renderAdmin() {
     renderUsersTable();
     renderResetRequestsTable();
     renderLeaguesTable();
+    renderOrganizationLogoAdmin();
   }
+}
+
+function getViewerOrganization() {
+  return appState.adminData?.organization || appState.organizations?.[0] || null;
+}
+
+function getOrganizationLogoUrl(organization = getViewerOrganization()) {
+  if (!organization?.logoUpdatedAt) return "";
+  return `/api/organization/logo?v=${encodeURIComponent(organization.logoUpdatedAt)}`;
+}
+
+function renderOrganizationLogoTopbar() {
+  const logoUrl = getOrganizationLogoUrl();
+  if (!organizationLogoSlot || !organizationLogoImg) return;
+  if (!logoUrl) {
+    organizationLogoSlot.hidden = true;
+    organizationLogoImg.removeAttribute("src");
+    return;
+  }
+  organizationLogoImg.src = logoUrl;
+  organizationLogoSlot.hidden = false;
+}
+
+function renderOrganizationLogoAdmin() {
+  if (!organizationLogoPreview || appState.viewer?.role !== "admin") return;
+  const logoUrl = getOrganizationLogoUrl(appState.adminData?.organization);
+  renderOrganizationLogoPreview(logoUrl, appState.adminData?.organization?.logoOriginalName || "");
+  if (organizationLogoDeleteBtn) organizationLogoDeleteBtn.disabled = !logoUrl;
+}
+
+function renderOrganizationLogoPreview(src, label = "") {
+  if (!organizationLogoPreview) return;
+  organizationLogoPreview.innerHTML = "";
+  if (!src) {
+    const empty = document.createElement("span");
+    empty.textContent = "Sin imagen";
+    organizationLogoPreview.appendChild(empty);
+    return;
+  }
+  const img = document.createElement("img");
+  img.src = src;
+  img.alt = label ? `Vista previa de ${label}` : "Vista previa del logo";
+  organizationLogoPreview.appendChild(img);
+}
+
+function validateOrganizationLogoFile(file) {
+  if (!file) return "Selecciona una imagen para guardar.";
+  if (!ORGANIZATION_LOGO_TYPES.has(file.type)) {
+    return "Usa una imagen PNG, WebP, JPG o SVG.";
+  }
+  if (file.size > ORGANIZATION_LOGO_MAX_BYTES) {
+    return "La imagen debe pesar máximo 512 KB.";
+  }
+  return "";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function bindSuperadminSections() {
@@ -2254,8 +2651,85 @@ function bindSuperadminSections() {
       const nextSection = button.dataset.superadminView;
       if (!nextSection) return;
       setActiveSuperadminSection(nextSection);
+      if (nextSection === "results") void loadSuperadminFinishedMatches();
     });
   });
+}
+
+superadminResultsRefresh?.addEventListener("click", () => {
+  void loadSuperadminFinishedMatches(true);
+});
+
+superadminResultMatch?.addEventListener("change", syncSuperadminResultForm);
+
+superadminResultForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (appState.viewer?.role !== "superadmin") return;
+  const matchId = superadminResultMatch?.value || "";
+  const rawHomeGoals = superadminResultHome?.value ?? "";
+  const rawAwayGoals = superadminResultAway?.value ?? "";
+  const homeGoals = Number(rawHomeGoals);
+  const awayGoals = Number(rawAwayGoals);
+  if (!matchId || rawHomeGoals === "" || rawAwayGoals === "" || !Number.isInteger(homeGoals) || !Number.isInteger(awayGoals) || homeGoals < 0 || awayGoals < 0) {
+    superadminResultStatus.textContent = "Selecciona un partido y escribe un marcador válido.";
+    return;
+  }
+  try {
+    setLoading(true, "Guardando resultado...");
+    await postJson(`/api/superadmin/match-results/${encodeURIComponent(matchId)}`, { homeGoals, awayGoals });
+    superadminResultStatus.textContent = "Resultado guardado. El ranking ya puede recalcularse.";
+    await loadSuperadminFinishedMatches(true, matchId);
+  } catch (error) {
+    superadminResultStatus.textContent = error.message;
+  } finally {
+    setLoading(false);
+  }
+});
+
+async function loadSuperadminFinishedMatches(force = false, selectedMatchId = "") {
+  if (appState.viewer?.role !== "superadmin" || !superadminResultMatch) return;
+  if (superadminFinishedMatches.length && !force) {
+    renderSuperadminFinishedMatches(selectedMatchId);
+    return;
+  }
+  try {
+    superadminResultStatus.textContent = "Cargando partidos finalizados...";
+    const payload = await getJson("/api/superadmin/match-results");
+    superadminFinishedMatches = Array.isArray(payload?.matches) ? payload.matches : [];
+    renderSuperadminFinishedMatches(selectedMatchId);
+    superadminResultStatus.textContent = superadminFinishedMatches.length ? "" : "No hay partidos finalizados.";
+  } catch (error) {
+    superadminResultStatus.textContent = error.message;
+  }
+}
+
+function renderSuperadminFinishedMatches(selectedMatchId = "") {
+  if (!superadminResultMatch) return;
+  const currentValue = selectedMatchId || superadminResultMatch.value;
+  superadminResultMatch.innerHTML = '<option value="">Selecciona un partido</option>';
+  superadminFinishedMatches.forEach((match) => {
+    const option = document.createElement("option");
+    option.value = match.id;
+    const score = match.scoreHome == null || match.scoreAway == null ? "sin marcador" : `${match.scoreHome}-${match.scoreAway}`;
+    const source = match.scoreSource === "manual" ? "manual" : "API";
+    option.textContent = `${match.competitionCode} ${match.season} · ${formatTeamName(match.homeTeam)} vs ${formatTeamName(match.awayTeam)} · ${score} · ${source}`;
+    superadminResultMatch.appendChild(option);
+  });
+  superadminResultMatch.value = superadminFinishedMatches.some((match) => match.id === currentValue) ? currentValue : "";
+  syncSuperadminResultForm();
+}
+
+function syncSuperadminResultForm() {
+  const match = superadminFinishedMatches.find((entry) => entry.id === superadminResultMatch?.value);
+  if (superadminResultHome) superadminResultHome.value = match?.scoreHome == null ? "" : String(match.scoreHome);
+  if (superadminResultAway) superadminResultAway.value = match?.scoreAway == null ? "" : String(match.scoreAway);
+  if (superadminResultStatus && match) {
+    superadminResultStatus.textContent = match.scoreSource === "manual"
+      ? `Resultado manual guardado${match.manualScoreUpdatedAt ? ` · ${formatDateTime(match.manualScoreUpdatedAt)}` : ""}.`
+      : match.scoreHome == null || match.scoreAway == null
+        ? "Football-Data todavía no ha entregado el marcador."
+        : "Resultado recibido desde Football-Data.";
+  }
 }
 
 function bindSuperadminAdminForm() {
@@ -2397,6 +2871,43 @@ function renderAdminsTable() {
       <td><button type="button" class="btn btn-ghost btn-sm" data-edit-admin="${escapeHtml(admin.id)}">Ver</button></td>
     `;
     adminsBody.appendChild(row);
+  });
+}
+
+function renderSuperadminResetRequestsTable() {
+  if (!superadminResetRequestsBody) return;
+  superadminResetRequestsBody.innerHTML = "";
+  if (superadminResetRequestStatus) superadminResetRequestStatus.textContent = superadminTemporaryPasswordNotice;
+  const requests = appState.superadminData?.passwordResetRequests || [];
+  const compact = isSmallScreen();
+  if (!requests.length) {
+    superadminResetRequestsBody.innerHTML = '<tr><td colspan="5">No hay solicitudes pendientes de admins.</td></tr>';
+    if (superadminResetRequestStatus && !superadminTemporaryPasswordNotice) superadminResetRequestStatus.textContent = "";
+    return;
+  }
+
+  requests.forEach((request) => {
+    const row = document.createElement("tr");
+    row.innerHTML = compact
+      ? `
+        <td>
+          <div class="compact-row">
+            <strong>${escapeHtml(request.displayName)}</strong>
+            <span>${escapeHtml(request.email)}</span>
+            <small>${escapeHtml(request.organizationName || "Sin organización")}</small>
+            <small>${formatDateTime(request.requestedAt)}</small>
+          </div>
+        </td>
+        <td><button type="button" class="btn btn-ghost btn-sm" data-issue-temporary="${escapeHtml(request.id)}">Emitir temporal</button></td>
+      `
+      : `
+        <td>${escapeHtml(request.organizationName || "Sin organización")}</td>
+        <td>${escapeHtml(request.displayName)}</td>
+        <td>${escapeHtml(request.email)}</td>
+        <td>${formatDateTime(request.requestedAt)}</td>
+        <td><button type="button" class="btn btn-ghost btn-sm" data-issue-temporary="${escapeHtml(request.id)}">Emitir temporal</button></td>
+      `;
+    superadminResetRequestsBody.appendChild(row);
   });
 }
 
@@ -2594,12 +3105,20 @@ function formatBulkImportStatus(status) {
   }[status] || status;
 }
 
-async function readBulkImportFile() {
+async function readBulkImportExcelFile() {
   const file = bulkImportFileInput?.files?.[0];
-  if (!file) throw new Error("Selecciona un archivo CSV.");
-  const text = await file.text();
-  if (!text.trim()) throw new Error("El archivo está vacío.");
-  return text;
+  if (!file) throw new Error("Selecciona un archivo Excel.");
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension !== "xlsx") {
+    throw new Error("El archivo debe estar en formato Excel .xlsx.");
+  }
+  ensureExcelLibraries();
+  if (!file.size) throw new Error("El archivo está vacío.");
+  const parsed = await readXlsxFile(file);
+  const rows = Array.isArray(parsed?.[0]?.data) ? parsed[0].data : parsed;
+  const csvText = rowsToCsv(rows);
+  if (!csvText.trim()) throw new Error("La primera hoja del archivo Excel está vacía.");
+  return csvText;
 }
 
 function downloadCsvFile(csv, filename) {
@@ -2614,17 +3133,115 @@ function downloadCsvFile(csv, filename) {
   URL.revokeObjectURL(url);
 }
 
+async function downloadExcelFromCsv(csv, filename, sheetName = "Datos") {
+  ensureExcelLibraries();
+  const data = parseCsvForExcel(csv);
+  const blob = await writeXlsxFile(data, { sheet: sheetName }).toBlob();
+  downloadBlobFile(blob, filename);
+}
+
+function downloadBlobFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsvForExcel(csv) {
+  const source = String(csv || "").replace(/^\uFEFF/, "");
+  const rows = [];
+  let row = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        value += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(value);
+      value = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(value);
+      rows.push(row);
+      row = [];
+      value = "";
+      continue;
+    }
+
+    value += char;
+  }
+
+  if (value || row.length) {
+    row.push(value);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function rowsToCsv(rows) {
+  return (rows || [])
+    .filter((row) => Array.isArray(row) && row.some((value) => String(value ?? "").trim()))
+    .map((row) => row.map(toCsvCell).join(","))
+    .join("\n");
+}
+
+function ensureExcelLibraries() {
+  if (!window.readXlsxFile || !window.writeXlsxFile) {
+    throw new Error("No se pudo cargar el lector de Excel. Recarga la página e intenta nuevamente.");
+  }
+}
+
 function renderUsersTable() {
   usersBody.innerHTML = "";
   const users = appState.adminData?.users || [];
   const compact = isSmallScreen();
   if (deleteAllUsersBtn) deleteAllUsersBtn.disabled = !users.length;
+  const query = normalizeText(adminUserQuery);
+  const filteredUsers = query
+    ? users.filter((user) => {
+      const leagues = (user.leagues || []).map((league) => league.name).join(" ");
+      return normalizeText(`${user.displayName} ${user.email} ${leagues}`).includes(query);
+    })
+    : users;
+
   if (!users.length) {
     usersBody.innerHTML = '<tr><td colspan="5">No hay usuarios creados.</td></tr>';
+    renderUsersPagination(0, 0);
     return;
   }
 
-  users.forEach((user) => {
+  if (!filteredUsers.length) {
+    usersBody.innerHTML = '<tr><td colspan="5">No encontramos usuarios con ese criterio.</td></tr>';
+    renderUsersPagination(0, users.length);
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  adminUsersPage = Math.min(Math.max(1, adminUsersPage), totalPages);
+  const start = (adminUsersPage - 1) * PAGE_SIZE;
+  const visibleUsers = filteredUsers.slice(start, start + PAGE_SIZE);
+
+  visibleUsers.forEach((user) => {
     const leagues = (user.leagues || []).map((league) => league.name).join(", ") || "Sin ligas";
     const row = document.createElement("tr");
     row.innerHTML = compact
@@ -2658,50 +3275,60 @@ function renderUsersTable() {
       `;
     usersBody.appendChild(row);
   });
+
+  renderUsersPagination(filteredUsers.length, users.length);
+}
+
+function renderUsersPagination(totalFiltered, totalUsers) {
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
+  adminUsersPage = Math.min(Math.max(1, adminUsersPage), totalPages);
+
+  if (usersPageInfo) {
+    usersPageInfo.textContent = totalFiltered
+      ? `Página ${adminUsersPage} de ${totalPages} · ${totalFiltered} de ${totalUsers} usuario(s)`
+      : totalUsers
+        ? `Sin resultados · ${totalUsers} usuario(s)`
+        : "Sin usuarios para mostrar";
+  }
+  if (usersPrevPageBtn) {
+    usersPrevPageBtn.disabled = !totalFiltered || adminUsersPage <= 1;
+  }
+  if (usersNextPageBtn) {
+    usersNextPageBtn.disabled = !totalFiltered || adminUsersPage >= totalPages;
+  }
 }
 
 function renderLeaguesTable() {
   leaguesBody.innerHTML = "";
   const leagues = appState.adminData?.leagues || [];
-  const compact = isSmallScreen();
   if (deleteAllLeaguesBtn) deleteAllLeaguesBtn.disabled = !leagues.length;
   if (!leagues.length) {
-    leaguesBody.innerHTML = '<tr><td colspan="6">No hay ligas creadas.</td></tr>';
+    leaguesBody.innerHTML = '<tr><td colspan="3">No hay ligas creadas.</td></tr>';
     return;
   }
 
   leagues.forEach((league) => {
     const row = document.createElement("tr");
-    row.innerHTML = compact
-      ? `
-        <td>
-          <div class="compact-row">
-            <strong>${escapeHtml(league.name)}</strong>
-            <span>${escapeHtml(league.competitionCode)} · ${league.season}</span>
-            <small>Exacto ${league.exactPoints} · Tendencia ${league.outcomePoints}</small>
-          </div>
-        </td>
-        <td>${league.isActive ? "Activa" : "Inactiva"}</td>
-        <td>
-          <div class="table-actions">
-            <button type="button" class="btn btn-ghost btn-sm" data-sync-league="${escapeHtml(league.id)}">Sincronizar</button>
-            <button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button>
-          </div>
-        </td>
-      `
-      : `
-        <td>${escapeHtml(league.name)}</td>
-        <td>${escapeHtml(league.competitionName)} (${escapeHtml(league.competitionCode)})</td>
-        <td>${league.season}</td>
-        <td>Exacto ${league.exactPoints} · Tendencia ${league.outcomePoints} · Cierre ${league.lockMinutes}m</td>
-        <td>${league.isActive ? "Activa" : "Inactiva"}</td>
-        <td>
-          <div class="table-actions">
-            <button type="button" class="btn btn-ghost btn-sm" data-sync-league="${escapeHtml(league.id)}">Sincronizar</button>
-            <button type="button" class="btn btn-ghost-danger btn-sm" data-delete-league="${escapeHtml(league.id)}">Eliminar</button>
-          </div>
-        </td>
-      `;
+    row.innerHTML = `
+      <td>
+        <div class="compact-row">
+          <strong>${escapeHtml(league.name)}</strong>
+          <span>${escapeHtml(league.competitionName)} (${escapeHtml(league.competitionCode)})</span>
+          <small>${league.isActive ? "Activa" : "Inactiva"} · ${scoreModeShortLabel(league.scoreMode)} · Exacto ${league.exactPoints} · Tendencia ${league.outcomePoints}</small>
+        </div>
+      </td>
+      <td>${league.season}</td>
+      <td>
+        <div class="table-actions admin-league-actions">
+          <button type="button" class="icon-action-btn" data-sync-league="${escapeHtml(league.id)}" aria-label="Sincronizar ${escapeHtml(league.name)}" title="Sincronizar liga">
+            <span aria-hidden="true">↻</span>
+          </button>
+          <button type="button" class="icon-action-btn icon-action-btn--danger" data-delete-league="${escapeHtml(league.id)}" aria-label="Eliminar ${escapeHtml(league.name)}" title="Eliminar liga">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      </td>
+    `;
     leaguesBody.appendChild(row);
   });
 }
@@ -2795,6 +3422,41 @@ function resetUserForm() {
   userStatus.textContent = "";
 }
 
+function updateAdminUserModalCopy() {
+  const editing = Boolean(userIdInput.value);
+  if (adminUserModalTitle) {
+    adminUserModalTitle.textContent = editing ? "Editar usuario" : "Nuevo usuario";
+  }
+  if (adminUserModalSubtitle) {
+    adminUserModalSubtitle.textContent = editing
+      ? "Actualiza sus datos, estado y ligas autorizadas."
+      : "Define sus datos básicos y las ligas autorizadas.";
+  }
+}
+
+function openAdminUserModal() {
+  if (!adminUserModal) return;
+  updateAdminUserModalCopy();
+  adminUserModal.hidden = false;
+  setTimeout(() => userNameInput?.focus(), 50);
+}
+
+function closeAdminUserModal() {
+  if (!adminUserModal) return;
+  adminUserModal.hidden = true;
+}
+
+function openAdminLeagueModal() {
+  if (!adminLeagueModal) return;
+  adminLeagueModal.hidden = false;
+  setTimeout(() => adminLeagueNameInput?.focus(), 50);
+}
+
+function closeAdminLeagueModal() {
+  if (!adminLeagueModal) return;
+  adminLeagueModal.hidden = true;
+}
+
 function readAdminLeagueForm() {
   const selectedOption = adminLeagueCompetitionInput.selectedOptions[0];
   return {
@@ -2806,6 +3468,7 @@ function readAdminLeagueForm() {
     exactPoints: Number(adminLeagueExactInput.value),
     outcomePoints: Number(adminLeagueOutcomeInput.value),
     lockMinutes: Number(adminLeagueLockInput.value),
+    scoreMode: adminLeagueScoreModeInput.value || "regular_time",
     isActive: true,
   };
 }
@@ -2821,6 +3484,7 @@ function readLeagueSettingsForm() {
     exactPoints: Number(exactPointsInput.value),
     outcomePoints: Number(outcomePointsInput.value),
     lockMinutes: Number(lockMinutesInput.value),
+    scoreMode: scoreModeInput.value || "regular_time",
     isActive: true,
   };
 }
@@ -2870,6 +3534,11 @@ function bindGuide() {
       markGuideSeen();
     }
     closeGuide();
+  });
+  aboutTrigger?.addEventListener("click", openAboutModal);
+  aboutCloseBtn?.addEventListener("click", closeAboutModal);
+  aboutModal?.addEventListener("click", (event) => {
+    if (event.target === aboutModal) closeAboutModal();
   });
 }
 
@@ -2969,6 +3638,17 @@ function closeGuide() {
   guideModal.hidden = true;
 }
 
+function openAboutModal() {
+  if (!aboutModal) return;
+  closeMobileMenu();
+  aboutModal.hidden = false;
+}
+
+function closeAboutModal() {
+  if (!aboutModal) return;
+  aboutModal.hidden = true;
+}
+
 function renderGuide() {
   const role = appState.viewer?.role;
   const sections = getGuideSections();
@@ -2978,7 +3658,7 @@ function renderGuide() {
   guideSubtitle.textContent = role === "admin"
     ? "Aquí tienes una guía clara por vistas para operar ligas, usuarios y revisiones de porras."
     : role === "user"
-      ? "Aquí tienes una guía por vistas para apostar y seguir tu desempeño dentro de la liga."
+      ? "Aquí tienes una guía por vistas para jugar y seguir tu desempeño dentro de la liga."
       : "Aquí tienes una guía por vistas para administrar la plataforma SaaS y sus organizaciones.";
   guideSections.innerHTML = sections
     .map((section) => `
@@ -3019,12 +3699,17 @@ function closeMobileMenu() {
 
 function syncMobileMenuVisibility() {
   if (!mobileMenuToggle) return;
-  if (window.innerWidth > 899) {
+  const isSmall = isSmallScreen();
+  const layoutChanged = lastSmallScreenState != null && lastSmallScreenState !== isSmall;
+  lastSmallScreenState = isSmall;
+
+  if (!isSmall) {
     topbarActions.classList.remove("open");
     mobileMenuToggle.classList.remove("active");
     mobileMenuToggle.setAttribute("aria-expanded", "false");
   }
-  if (appState.viewer?.role) {
+
+  if (layoutChanged && appState.viewer?.role) {
     renderMatches();
     renderAdmin();
     renderLeaderboard();
@@ -3310,6 +3995,7 @@ function formatTeamName(name) {
 
 function normalizeText(value) {
   return String(value || "")
+    .replace(/[’‘`´]/g, "'")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();

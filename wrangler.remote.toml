@@ -13,14 +13,17 @@ binding = "DB"
 database_name = "football-porra"
 database_id = "b0091f10-46b9-49c7-b3e0-a161eedd9b6d"
 migrations_dir = "./migrations"
+remote = true
 
 [[kv_namespaces]]
 binding = "APP_CACHE"
 id = "eacf423d6e2d4711bbfd3ba16aba1610"
+remote = true
 
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
 bucket_name = "football-porra-media"
+remote = true
 
 [[queues.producers]]
 binding = "PREDICTION_QUEUE"

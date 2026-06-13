@@ -4,17 +4,33 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 const SESSION_TOUCH_INTERVAL_MS = 1000 * 60 * 10;
 const PASSWORD_ITERATIONS = 100_000;
 const PASSWORD_KEY_LENGTH = 256;
+const DUMMY_PASSWORD_SALT_HEX = "00000000000000000000000000000000";
+const DUMMY_PASSWORD_HASH_HEX = "0000000000000000000000000000000000000000000000000000000000000000";
 const OPEN_PREDICTION_STATUSES = new Set(["SCHEDULED", "TIMED"]);
 const BOOTSTRAP_CACHE_TTL_SECONDS = 60;
 const COMPETITIONS_CACHE_TTL_SECONDS = 60 * 60;
 const TEAM_ASSETS_CACHE_TTL_SECONDS = 60 * 60;
+const FOOTBALL_DATA_TIMEOUT_MS = 12_000;
 const STATIC_HTML_CACHE_CONTROL = "public, max-age=0, s-maxage=300, stale-while-revalidate=30";
 const STATIC_ASSET_CACHE_CONTROL = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
 const GLOBAL_CACHE_VERSION_KEY = "version:global";
-const BOOTSTRAP_PAYLOAD_VERSION = 2;
+const BOOTSTRAP_PAYLOAD_VERSION = 3;
 const TRANSIENT_WRITE_RETRY_ATTEMPTS = 4;
 const TRANSIENT_WRITE_RETRY_BASE_DELAY_MS = 40;
 const PREDICTION_QUEUE_BATCH_SIZE = 25;
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const MAX_LOGIN_PASSWORD_LENGTH = 512;
+const LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 8;
+const LOGIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
+const LOGIN_RATE_LIMIT_LOCK_SECONDS = 15 * 60;
+const MAX_ORGANIZATION_LOGO_BYTES = 512 * 1024;
+const MAX_ORGANIZATION_LOGO_JSON_BYTES = 1024 * 1024;
+const ORGANIZATION_LOGO_TYPES = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/svg+xml", "svg"],
+]);
 const FALLBACK_COMPETITIONS = [
   { id: 2000, code: "WC", name: "FIFA World Cup" },
   { id: 2001, code: "CL", name: "UEFA Champions League" },
@@ -104,9 +120,23 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
         if (setupRequired) throw httpError("Primero debes crear el superadmin inicial.", 409);
         const payload = await readJson(request);
-        const user = await authenticateUser(env.DB, payload?.email, payload?.password);
+        const loginIdentity = await buildLoginRateLimitIdentity(request, payload?.email);
+        await assertLoginAllowed(env, loginIdentity);
+        let user;
+        try {
+          user = await authenticateUser(env.DB, payload?.email, payload?.password);
+        } catch (error) {
+          await recordFailedLogin(env, loginIdentity);
+          if (error.status === 401 || error.status === 400) {
+            throw httpError("Credenciales inválidas.", 401);
+          }
+          throw error;
+        }
+        await clearSuccessfulLogin(env, loginIdentity);
+        const selfResolvedPasswordReset = await resolvePendingPasswordResetAfterLogin(env.DB, user);
 
         if (session?.user?.id === user.id) {
+          if (selfResolvedPasswordReset) await bumpGlobalCacheVersion(env);
           return jsonResponse({ ok: true, user: sanitizeViewer(user), reusedSession: true });
         }
 
@@ -121,6 +151,20 @@ export default {
           entityLabel: user.email,
           details: {},
         });
+        if (selfResolvedPasswordReset) {
+          scheduleAuditLog(ctx, env.DB, {
+            organizationId: user.organizationId,
+            actorUserId: user.id,
+            actorRole: user.role,
+            actorDisplayName: user.displayName,
+            actionType: "password_reset_self_resolved",
+            entityType: "password_reset_request",
+            entityId: user.id,
+            entityLabel: user.email,
+            details: { resolvedBy: "successful_login" },
+          });
+          await bumpGlobalCacheVersion(env);
+        }
         const sessionToken = await createSession(env.DB, user.id);
         return jsonResponse(
           { ok: true, user: sanitizeViewer(user) },
@@ -175,6 +219,10 @@ export default {
       }
 
       if (!session?.user) throw httpError("Debes iniciar sesión.", 401);
+
+      if (request.method === "GET" && url.pathname === "/api/organization/logo") {
+        return serveOrganizationLogo(env, session.user);
+      }
 
       if (request.method === "GET" && url.pathname.startsWith("/api/leagues/") && url.pathname.endsWith("/leaderboard")) {
         const leagueId = decodeURIComponent(url.pathname.slice("/api/leagues/".length, -"/leaderboard".length));
@@ -316,8 +364,48 @@ export default {
       }
 
       if (request.method === "GET" && url.pathname === "/api/admin/password-reset-requests") {
+        requireRole(session.user, ["superadmin", "admin"]);
+        const requests = session.user.role === "superadmin"
+          ? await getSuperadminPasswordResetRequests(env.DB)
+          : await getPasswordResetRequests(env.DB, session.user.organizationId);
+        return jsonResponse({ requests });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/admin/organization/logo") {
         requireRole(session.user, ["admin"]);
-        return jsonResponse({ requests: await getPasswordResetRequests(env.DB, session.user.organizationId) });
+        const payload = await readJson(request, MAX_ORGANIZATION_LOGO_JSON_BYTES);
+        const organization = await updateOrganizationLogo(env, session.user, payload);
+        await createAuditLog(env.DB, {
+          organizationId: session.user.organizationId,
+          actorUserId: session.user.id,
+          actorRole: session.user.role,
+          actorDisplayName: session.user.displayName,
+          actionType: "organization_logo_updated",
+          entityType: "organization",
+          entityId: organization.id,
+          entityLabel: organization.name,
+          details: { logoOriginalName: organization.logoOriginalName || "" },
+        });
+        await bumpGlobalCacheVersion(env);
+        return jsonResponse({ organization });
+      }
+
+      if (request.method === "DELETE" && url.pathname === "/api/admin/organization/logo") {
+        requireRole(session.user, ["admin"]);
+        const organization = await deleteOrganizationLogo(env, session.user);
+        await createAuditLog(env.DB, {
+          organizationId: session.user.organizationId,
+          actorUserId: session.user.id,
+          actorRole: session.user.role,
+          actorDisplayName: session.user.displayName,
+          actionType: "organization_logo_deleted",
+          entityType: "organization",
+          entityId: organization.id,
+          entityLabel: organization.name,
+          details: {},
+        });
+        await bumpGlobalCacheVersion(env);
+        return jsonResponse({ organization });
       }
 
       if (request.method === "POST" && url.pathname === "/api/admin/users") {
@@ -549,6 +637,39 @@ export default {
         return jsonResponse({ logs });
       }
 
+      if (request.method === "GET" && url.pathname === "/api/superadmin/match-results") {
+        requireRole(session.user, ["superadmin"]);
+        return jsonResponse({ matches: await getSuperadminFinishedMatches(env.DB) });
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/api/superadmin/match-results/")) {
+        requireRole(session.user, ["superadmin"]);
+        const matchId = decodeURIComponent(url.pathname.slice("/api/superadmin/match-results/".length));
+        const payload = await readJson(request);
+        const result = await setManualMatchResult(env.DB, session.user, matchId, payload);
+        await createAuditLog(env.DB, {
+          organizationId: null,
+          actorUserId: session.user.id,
+          actorRole: session.user.role,
+          actorDisplayName: session.user.displayName,
+          actionType: "match_result_set_manual",
+          entityType: "match",
+          entityId: result.match.id,
+          entityLabel: `${result.match.homeTeam} vs ${result.match.awayTeam}`,
+          details: {
+            homeGoals: result.match.scoreHome,
+            awayGoals: result.match.scoreAway,
+            competitionCode: result.match.competitionCode,
+            season: result.match.season,
+          },
+        });
+        for (const leagueId of result.leagueIds) {
+          await bumpLeagueCacheVersion(env, leagueId);
+        }
+        await bumpGlobalCacheVersion(env);
+        return jsonResponse({ ok: true, match: result.match });
+      }
+
       if (request.method === "POST" && url.pathname.startsWith("/api/admin/sync/")) {
         requireRole(session.user, ["admin"]);
         const leagueId = decodeURIComponent(url.pathname.slice("/api/admin/sync/".length));
@@ -570,7 +691,7 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname.startsWith("/api/admin/password-reset-requests/")) {
-        requireRole(session.user, ["admin"]);
+        requireRole(session.user, ["superadmin", "admin"]);
         const suffix = url.pathname.slice("/api/admin/password-reset-requests/".length);
         const [requestId, action] = suffix.split("/");
         if (action !== "issue-temporary") {
@@ -578,15 +699,20 @@ export default {
         }
         const result = await issueTemporaryPassword(env.DB, session.user, decodeURIComponent(requestId));
         await createAuditLog(env.DB, {
-          organizationId: session.user.organizationId,
+          organizationId: result.organizationId,
           actorUserId: session.user.id,
           actorRole: session.user.role,
           actorDisplayName: session.user.displayName,
           actionType: "temporary_password_issued",
           entityType: "password_reset_request",
           entityId: requestId,
-          entityLabel: requestId,
-          details: {},
+          entityLabel: result.email,
+          details: {
+            targetUserId: result.userId,
+            targetEmail: result.email,
+            targetRole: result.role,
+            targetDisplayName: result.displayName,
+          },
         });
         await bumpGlobalCacheVersion(env);
         return jsonResponse(result);
@@ -648,6 +774,7 @@ async function buildBootstrap(env, session, setupRequired, requestedLeagueId) {
       superadminData: {
         admins: await getSuperadminManagedAdmins(env.DB),
         organizations: await getOrganizations(env.DB, true),
+        passwordResetRequests: await getSuperadminPasswordResetRequests(env.DB),
       },
     };
   }
@@ -755,7 +882,7 @@ async function getLeagueDashboard(db, viewer, leagueId) {
 
   const { matches, standings, predictions, members } = await getLeagueDashboardPayload(db, league);
 
-  const decoratedMatches = matches.map((match) => decorateMatch(match, league));
+  const decoratedMatches = matches.map((match) => decorateMatch(applyLeagueScoreMode(match, league), league));
   const predictionsWithPoints = predictions.map((prediction) => {
     const match = decoratedMatches.find((entry) => entry.id === prediction.matchId);
     return {
@@ -785,7 +912,14 @@ async function getLeagueDashboardLite(db, viewer, leagueId) {
   await ensureLeagueAccess(db, viewer, leagueId);
 
   const { matches, standings, predictions, memberCount, predictionCount } = await getLeagueDashboardLitePayload(db, league, viewer);
-  const decoratedMatches = matches.map((match) => decorateMatch(match, league));
+  const decoratedMatches = matches.map((match) => decorateMatch(applyLeagueScoreMode(match, league), league));
+  const predictionsWithPoints = predictions.map((prediction) => {
+    const match = decoratedMatches.find((entry) => entry.id === prediction.matchId);
+    return {
+      ...prediction,
+      pointsAwarded: match ? pointsForPrediction(prediction, match, league) : 0,
+    };
+  });
 
   return {
     ...league,
@@ -793,7 +927,7 @@ async function getLeagueDashboardLite(db, viewer, leagueId) {
     canPredict: viewer.role === "user",
     matches: decoratedMatches,
     standings,
-    predictions,
+    predictions: predictionsWithPoints,
     leaderboard: [],
     members: [],
     memberCount,
@@ -874,7 +1008,7 @@ async function getLeagueLeaderboardResponse(db, viewer, leagueId) {
   if (!league) throw httpError("Liga no encontrada.", 404);
   await ensureLeagueAccess(db, viewer, leagueId);
   const { matches, predictions, members } = await getLeagueLeaderboardPayload(db, league);
-  const decoratedMatches = matches.map((match) => decorateMatch(match, league));
+  const decoratedMatches = matches.map((match) => decorateMatch(applyLeagueScoreMode(match, league), league));
   return {
     leaderboard: buildLeaderboard(members, decoratedMatches, predictions, league),
     members: viewer.role === "admin" ? members : [],
@@ -1004,10 +1138,13 @@ async function createInitialSuperadmin(db, payload) {
 async function authenticateUser(db, rawEmail, rawPassword) {
   const email = normalizeEmail(rawEmail);
   const password = String(rawPassword || "");
-  if (!password) throw httpError("Introduce tu contraseña.", 400);
+  if (!password || password.length > MAX_LOGIN_PASSWORD_LENGTH) throw httpError("Credenciales inválidas.", 401);
 
   const row = await db.prepare("SELECT * FROM users WHERE email_normalized = ?1").bind(email).first();
-  if (!row || Number(row.is_active) !== 1) throw httpError("Credenciales inválidas.", 401);
+  if (!row || Number(row.is_active) !== 1) {
+    await verifyPassword(password, DUMMY_PASSWORD_SALT_HEX, DUMMY_PASSWORD_HASH_HEX);
+    throw httpError("Credenciales inválidas.", 401);
+  }
   const valid = await verifyPassword(password, row.password_salt, row.password_hash);
   if (!valid) throw httpError("Credenciales inválidas.", 401);
   return normalizeUser(row);
@@ -1108,6 +1245,21 @@ async function requestPasswordReset(db, rawEmail) {
   )
     .bind(crypto.randomUUID(), user.id, user.organization_id || null, email, now)
     .run();
+}
+
+async function resolvePendingPasswordResetAfterLogin(db, user) {
+  const now = new Date().toISOString();
+  const result = await db.prepare(
+    `UPDATE password_reset_requests
+        SET status = 'resolved',
+            resolved_at = ?2,
+            resolved_by_user_id = ?1
+      WHERE user_id = ?1
+        AND status = 'pending'`,
+  )
+    .bind(user.id, now)
+    .run();
+  return Number(result.meta?.changes || 0) > 0;
 }
 
 async function createSession(db, userId) {
@@ -1568,8 +1720,8 @@ async function createLeague(db, adminUser, payload) {
   await db.prepare(
     `INSERT INTO leagues (
        id, organization_id, name, slug, competition_code, competition_id, competition_name, season,
-       exact_points, outcome_points, lock_minutes, last_sync_at, is_active, created_by_user_id, created_at, updated_at
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, ?12, ?13, ?14, ?14)`,
+       exact_points, outcome_points, lock_minutes, score_mode, last_sync_at, is_active, created_by_user_id, created_at, updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL, ?13, ?14, ?15, ?15)`,
   )
     .bind(
       id,
@@ -1583,12 +1735,24 @@ async function createLeague(db, adminUser, payload) {
       league.exactPoints,
       league.outcomePoints,
       league.lockMinutes,
+      league.scoreMode,
       league.isActive ? 1 : 0,
       adminUser.id,
       now,
     )
     .run();
+  await attachExistingSharedCompetitionData(db, id, league.competitionCode, league.season);
   return getLeagueById(db, id);
+}
+
+async function attachExistingSharedCompetitionData(db, leagueId, competitionCode, season) {
+  const snapshot = await getSharedCompetitionSnapshot(db, competitionCode, season);
+  if (!snapshot.matchesCount && !snapshot.standingsCount) return snapshot;
+
+  await db.prepare(
+    "UPDATE leagues SET last_sync_at = ?2, updated_at = ?2 WHERE id = ?1",
+  ).bind(leagueId, snapshot.lastSyncedAt).run();
+  return snapshot;
 }
 
 async function updateLeague(db, adminUser, leagueId, payload) {
@@ -1607,8 +1771,9 @@ async function updateLeague(db, adminUser, leagueId, payload) {
             exact_points = ?7,
             outcome_points = ?8,
             lock_minutes = ?9,
-            is_active = ?10,
-            updated_at = ?11
+            score_mode = ?10,
+            is_active = ?11,
+            updated_at = ?12
       WHERE id = ?1`,
   )
     .bind(
@@ -1621,6 +1786,7 @@ async function updateLeague(db, adminUser, leagueId, payload) {
       next.exactPoints,
       next.outcomePoints,
       next.lockMinutes,
+      next.scoreMode,
       next.isActive ? 1 : 0,
       now,
     )
@@ -1709,6 +1875,85 @@ async function updateOrganizationState(db, actingUser, organizationId, payload) 
   return getOrganizationById(db, organizationId);
 }
 
+async function updateOrganizationLogo(env, adminUser, payload) {
+  requireRole(adminUser, ["admin"]);
+  if (!env.MEDIA_BUCKET) throw httpError("No hay bucket de medios configurado.", 500);
+  const organization = await getOrganizationById(env.DB, adminUser.organizationId);
+  if (!organization) throw httpError("Organización no encontrada.", 404);
+
+  const contentType = normalizeOrganizationLogoType(payload?.contentType);
+  const originalName = String(payload?.fileName || "logo").trim().slice(0, 120);
+  const bytes = decodeBase64Image(payload?.data);
+  if (!bytes.length) throw httpError("Selecciona una imagen válida.", 400);
+  if (bytes.byteLength > MAX_ORGANIZATION_LOGO_BYTES) {
+    throw httpError("La imagen debe pesar máximo 512 KB.", 413);
+  }
+
+  const extension = ORGANIZATION_LOGO_TYPES.get(contentType);
+  const objectKey = `organizations/${adminUser.organizationId}/logo.${extension}`;
+  if (organization.logoObjectKey && organization.logoObjectKey !== objectKey) {
+    await env.MEDIA_BUCKET.delete(organization.logoObjectKey).catch(() => {});
+  }
+
+  await env.MEDIA_BUCKET.put(objectKey, bytes, {
+    httpMetadata: { contentType },
+  });
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE organizations
+        SET logo_object_key = ?2,
+            logo_content_type = ?3,
+            logo_original_name = ?4,
+            logo_updated_at = ?5,
+            updated_at = ?5
+      WHERE id = ?1`,
+  )
+    .bind(adminUser.organizationId, objectKey, contentType, originalName, now)
+    .run();
+
+  return getOrganizationById(env.DB, adminUser.organizationId);
+}
+
+async function deleteOrganizationLogo(env, adminUser) {
+  requireRole(adminUser, ["admin"]);
+  const organization = await getOrganizationById(env.DB, adminUser.organizationId);
+  if (!organization) throw httpError("Organización no encontrada.", 404);
+  if (organization.logoObjectKey && env.MEDIA_BUCKET) {
+    await env.MEDIA_BUCKET.delete(organization.logoObjectKey).catch(() => {});
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE organizations
+        SET logo_object_key = NULL,
+            logo_content_type = NULL,
+            logo_original_name = NULL,
+            logo_updated_at = NULL,
+            updated_at = ?2
+      WHERE id = ?1`,
+  )
+    .bind(adminUser.organizationId, now)
+    .run();
+
+  return getOrganizationById(env.DB, adminUser.organizationId);
+}
+
+async function serveOrganizationLogo(env, viewer) {
+  if (!viewer.organizationId) throw httpError("Logo no disponible.", 404);
+  const organization = await getOrganizationById(env.DB, viewer.organizationId);
+  if (!organization?.logoObjectKey) throw httpError("Logo no disponible.", 404);
+  if (!env.MEDIA_BUCKET) throw httpError("No hay bucket de medios configurado.", 500);
+
+  const object = await env.MEDIA_BUCKET.get(organization.logoObjectKey);
+  if (!object) throw httpError("Logo no disponible.", 404);
+  const headers = new Headers();
+  headers.set("content-type", organization.logoContentType || object.httpMetadata?.contentType || "application/octet-stream");
+  headers.set("cache-control", "private, max-age=3600, stale-while-revalidate=86400");
+  headers.set("etag", object.etag);
+  return new Response(object.body, { headers });
+}
+
 async function syncLeague(env, adminUser, leagueId) {
   requireRole(adminUser, ["admin"]);
   const league = await getLeagueById(env.DB, leagueId);
@@ -1717,7 +1962,44 @@ async function syncLeague(env, adminUser, leagueId) {
 }
 
 async function syncExistingLeague(env, league, competitionsCatalog = null) {
-  const result = await syncCompetitionSeason(env, league, competitionsCatalog);
+  if (!league.lastSyncAt) {
+    const snapshot = await attachExistingSharedCompetitionData(env.DB, league.id, league.competitionCode, league.season);
+    if (snapshot.matchesCount || snapshot.standingsCount) {
+      return {
+        ok: true,
+        reusedSharedData: true,
+        competitionCode: league.competitionCode,
+        competitionId: league.competitionId,
+        competitionName: league.competitionName,
+        season: league.season,
+        matchesCount: snapshot.matchesCount,
+        standingsCount: snapshot.standingsCount,
+        syncedAt: snapshot.lastSyncedAt,
+        leagueId: league.id,
+      };
+    }
+  }
+
+  let result;
+  try {
+    result = await syncCompetitionSeason(env, league, competitionsCatalog);
+  } catch (error) {
+    const snapshot = await attachExistingSharedCompetitionData(env.DB, league.id, league.competitionCode, league.season);
+    if (!snapshot.matchesCount && !snapshot.standingsCount) throw error;
+    console.warn(`[sync] No se pudo consultar Football-Data para ${league.name}. Se reutilizan datos compartidos.`, error);
+    return {
+      ok: true,
+      reusedSharedData: true,
+      competitionCode: league.competitionCode,
+      competitionId: league.competitionId,
+      competitionName: league.competitionName,
+      season: league.season,
+      matchesCount: snapshot.matchesCount,
+      standingsCount: snapshot.standingsCount,
+      syncedAt: snapshot.lastSyncedAt,
+      leagueId: league.id,
+    };
+  }
   await env.DB.prepare(
     "UPDATE leagues SET competition_id = ?2, competition_name = ?3, last_sync_at = ?4, updated_at = ?4 WHERE id = ?1",
   ).bind(league.id, result.competitionId, result.competitionName, result.syncedAt).run();
@@ -1748,7 +2030,8 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
   );
 
   const syncedAt = new Date().toISOString();
-  const matches = (Array.isArray(matchesPayload?.matches) ? matchesPayload.matches : [])
+  const rawMatches = Array.isArray(matchesPayload?.matches) ? matchesPayload.matches : [];
+  const matches = rawMatches
     .map((match) => normalizeMatch(match, league.id, league.competitionCode, competitionName, league.season, syncedAt))
     .filter(Boolean);
   const standings = normalizeStandings(
@@ -1757,6 +2040,7 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
     competitionName,
     league.season,
     syncedAt,
+    rawMatches,
   );
 
   const existingRows = await env.DB.prepare(
@@ -1764,7 +2048,15 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
   ).bind(league.competitionCode, league.season).all();
   const existingIds = new Set((existingRows.results || []).map((row) => row.id));
   const nextIds = new Set(matches.map((match) => match.id));
-  const idsToDelete = [...existingIds].filter((id) => !nextIds.has(id));
+  const shouldPreserveExistingMatches = matches.length === 0 && existingIds.size > 0;
+  if (shouldPreserveExistingMatches) {
+    console.warn(
+      `[sync] ${league.competitionCode} ${league.season} devolvió 0 partidos; se conservan ${existingIds.size} partidos existentes para proteger predicciones.`,
+    );
+  }
+  const idsToDelete = shouldPreserveExistingMatches
+    ? []
+    : [...existingIds].filter((id) => !nextIds.has(id));
 
   const statements = [
     env.DB.prepare("DELETE FROM shared_standings WHERE competition_code = ?1 AND season = ?2")
@@ -1776,8 +2068,10 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
       env.DB.prepare(
         `INSERT INTO shared_matches (
            id, source_match_id, competition_code, competition_name, season, utc_date, stage,
-           status, home_team, away_team, score_home, score_away, matchday, last_synced_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+           group_label, status, home_team, away_team, score_home, score_away, score_regular_home, score_regular_away,
+           score_full_home, score_full_away, score_penalty_home, score_penalty_away, score_duration,
+           score_winner, matchday, last_synced_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
          ON CONFLICT(id) DO UPDATE SET
            source_match_id = excluded.source_match_id,
            competition_code = excluded.competition_code,
@@ -1785,11 +2079,37 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
            season = excluded.season,
            utc_date = excluded.utc_date,
            stage = excluded.stage,
-           status = excluded.status,
+           group_label = excluded.group_label,
+           status = CASE
+             WHEN UPPER(shared_matches.status) = 'FINISHED'
+              AND UPPER(excluded.status) <> 'FINISHED'
+             THEN shared_matches.status
+             ELSE excluded.status
+           END,
            home_team = excluded.home_team,
            away_team = excluded.away_team,
-           score_home = excluded.score_home,
-           score_away = excluded.score_away,
+           score_home = COALESCE(excluded.score_home, shared_matches.score_home),
+           score_away = COALESCE(excluded.score_away, shared_matches.score_away),
+           score_regular_home = COALESCE(excluded.score_regular_home, shared_matches.score_regular_home),
+           score_regular_away = COALESCE(excluded.score_regular_away, shared_matches.score_regular_away),
+           score_full_home = COALESCE(excluded.score_full_home, shared_matches.score_full_home),
+           score_full_away = COALESCE(excluded.score_full_away, shared_matches.score_full_away),
+           score_penalty_home = excluded.score_penalty_home,
+           score_penalty_away = excluded.score_penalty_away,
+           score_duration = COALESCE(excluded.score_duration, shared_matches.score_duration),
+           score_winner = COALESCE(excluded.score_winner, shared_matches.score_winner),
+           score_source = CASE
+             WHEN excluded.score_home IS NOT NULL AND excluded.score_away IS NOT NULL THEN 'api'
+             ELSE shared_matches.score_source
+           END,
+           manual_score_updated_at = CASE
+             WHEN excluded.score_home IS NOT NULL AND excluded.score_away IS NOT NULL THEN NULL
+             ELSE shared_matches.manual_score_updated_at
+           END,
+           manual_score_updated_by_user_id = CASE
+             WHEN excluded.score_home IS NOT NULL AND excluded.score_away IS NOT NULL THEN NULL
+             ELSE shared_matches.manual_score_updated_by_user_id
+           END,
            matchday = excluded.matchday,
            last_synced_at = excluded.last_synced_at`,
       ).bind(
@@ -1800,11 +2120,20 @@ async function syncCompetitionSeason(env, league, competitionsCatalog = null) {
         match.season,
         match.utcDate,
         match.stage,
+        match.groupLabel,
         match.status,
         match.homeTeam,
         match.awayTeam,
         match.scoreHome,
         match.scoreAway,
+        match.scoreRegularHome,
+        match.scoreRegularAway,
+        match.scoreFullHome,
+        match.scoreFullAway,
+        match.scorePenaltyHome,
+        match.scorePenaltyAway,
+        match.scoreDuration,
+        match.scoreWinner,
         match.matchday,
         match.lastSyncedAt,
       ),
@@ -2023,10 +2352,10 @@ async function serveRemoteMediaAsset(env, objectKey, sourceUrl, fallbackType) {
     }
   }
 
-  const response = await fetch(sourceUrl, {
+  const response = await fetchWithTimeout(sourceUrl, {
     cf: { cacheEverything: true, cacheTtl: 86400 },
     headers: { "user-agent": "football-porra-tracker/1.0" },
-  });
+  }, 8_000);
   if (!response.ok) {
     throw httpError("No se pudo cargar el recurso solicitado.", 502);
   }
@@ -2169,7 +2498,7 @@ async function preparePredictionWrite(db, user, payload) {
       WHERE id = ?2 AND competition_code = ?3 AND season = ?4`,
   ).bind(league.id, matchId, league.competitionCode, league.season).first();
   if (!match) throw httpError("Partido no encontrado.", 404);
-  if (!canPredict(match, league)) throw httpError("Las apuestas para este partido ya están cerradas.", 409);
+  if (!canPredict(match, league)) throw httpError("Las jugadas para este partido ya están cerradas.", 409);
 
   const id = buildLeaguePredictionId(user.id, league.id, matchId);
   const now = new Date().toISOString();
@@ -2387,10 +2716,12 @@ async function getPasswordResetRequests(db, organizationId) {
   const result = await db.prepare(
     `SELECT password_reset_requests.*,
             users.display_name,
-            users.email
+            users.email,
+            users.role
        FROM password_reset_requests
        JOIN users ON users.id = password_reset_requests.user_id
       WHERE password_reset_requests.organization_id = ?1
+        AND users.role = 'user'
         AND password_reset_requests.status = 'pending'
       ORDER BY password_reset_requests.requested_at DESC`,
   )
@@ -2402,6 +2733,35 @@ async function getPasswordResetRequests(db, organizationId) {
     userId: row.user_id,
     displayName: row.display_name,
     email: row.email,
+    role: row.role,
+    requestedAt: row.requested_at,
+    status: row.status,
+  }));
+}
+
+async function getSuperadminPasswordResetRequests(db) {
+  const result = await db.prepare(
+    `SELECT password_reset_requests.*,
+            users.display_name,
+            users.email,
+            users.role,
+            organizations.name AS organization_name
+       FROM password_reset_requests
+       JOIN users ON users.id = password_reset_requests.user_id
+       LEFT JOIN organizations ON organizations.id = password_reset_requests.organization_id
+      WHERE users.role = 'admin'
+        AND password_reset_requests.status = 'pending'
+      ORDER BY password_reset_requests.requested_at DESC`,
+  ).all();
+
+  return (result.results || []).map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    displayName: row.display_name,
+    email: row.email,
+    role: row.role,
+    organizationId: row.organization_id || null,
+    organizationName: row.organization_name || "Sin organización",
     requestedAt: row.requested_at,
     status: row.status,
   }));
@@ -2409,7 +2769,12 @@ async function getPasswordResetRequests(db, organizationId) {
 
 async function issueTemporaryPassword(db, actingUser, requestId) {
   const row = await db.prepare(
-    `SELECT password_reset_requests.*, users.organization_id, users.id AS user_id
+    `SELECT password_reset_requests.*,
+            users.organization_id,
+            users.id AS user_id,
+            users.email,
+            users.display_name,
+            users.role
        FROM password_reset_requests
        JOIN users ON users.id = password_reset_requests.user_id
       WHERE password_reset_requests.id = ?1`,
@@ -2417,7 +2782,13 @@ async function issueTemporaryPassword(db, actingUser, requestId) {
     .bind(requestId)
     .first();
 
-  if (!row || row.organization_id !== actingUser.organizationId || row.status !== "pending") {
+  if (!row || row.status !== "pending") {
+    throw httpError("Solicitud no encontrada.", 404);
+  }
+
+  if (actingUser.role === "superadmin") {
+    if (row.role !== "admin") throw httpError("Solo puedes restablecer usuarios administradores.", 403);
+  } else if (row.organization_id !== actingUser.organizationId || row.role !== "user") {
     throw httpError("Solicitud no encontrada.", 404);
   }
 
@@ -2442,7 +2813,15 @@ async function issueTemporaryPassword(db, actingUser, requestId) {
     ).bind(requestId, now, actingUser.id),
   ], 10);
 
-  return { ok: true, temporaryPassword };
+  return {
+    ok: true,
+    temporaryPassword,
+    userId: row.user_id,
+    displayName: row.display_name,
+    email: row.email,
+    role: row.role,
+    organizationId: row.organization_id || null,
+  };
 }
 
 async function createAuditLog(db, entry) {
@@ -2540,6 +2919,61 @@ async function getAuditLogs(db, organizationId = "") {
   }));
 }
 
+async function getSuperadminFinishedMatches(db) {
+  const result = await db.prepare(
+    `SELECT *
+       FROM shared_matches
+      WHERE status = 'FINISHED'
+      ORDER BY utc_date DESC
+      LIMIT 250`,
+  ).all();
+  return mapLeagueMatches(result.results || []);
+}
+
+async function setManualMatchResult(db, actingUser, matchId, payload) {
+  requireRole(actingUser, ["superadmin"]);
+  const homeGoals = normalizeMatchScore(payload?.homeGoals, "Marcador local inválido.");
+  const awayGoals = normalizeMatchScore(payload?.awayGoals, "Marcador visitante inválido.");
+  const existing = await db.prepare("SELECT * FROM shared_matches WHERE id = ?1").bind(matchId).first();
+  if (!existing) throw httpError("Partido no encontrado.", 404);
+  if (String(existing.status || "").toUpperCase() !== "FINISHED") {
+    throw httpError("Solo puedes registrar resultados de partidos finalizados.", 409);
+  }
+
+  const now = new Date().toISOString();
+  const winner = homeGoals === awayGoals ? "DRAW" : homeGoals > awayGoals ? "HOME_TEAM" : "AWAY_TEAM";
+  await db.prepare(
+    `UPDATE shared_matches
+        SET score_home = ?2,
+            score_away = ?3,
+            score_regular_home = ?2,
+            score_regular_away = ?3,
+            score_full_home = ?2,
+            score_full_away = ?3,
+            score_duration = COALESCE(score_duration, 'REGULAR'),
+            score_winner = ?4,
+            score_source = 'manual',
+            manual_score_updated_at = ?5,
+            manual_score_updated_by_user_id = ?6
+      WHERE id = ?1`,
+  ).bind(matchId, homeGoals, awayGoals, winner, now, actingUser.id).run();
+
+  const updated = await db.prepare("SELECT * FROM shared_matches WHERE id = ?1").bind(matchId).first();
+  const leagues = await db.prepare(
+    `SELECT id FROM leagues WHERE competition_code = ?1 AND season = ?2`,
+  ).bind(updated.competition_code, updated.season).all();
+  return {
+    match: mapLeagueMatches([updated])[0],
+    leagueIds: (leagues.results || []).map((league) => league.id),
+  };
+}
+
+function normalizeMatchScore(value, message) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 99) throw httpError(message, 400);
+  return numeric;
+}
+
 async function getOrganizations(db, includeInactive = false) {
   const result = await db.prepare(
     `SELECT organizations.*,
@@ -2597,6 +3031,29 @@ async function getLeaguesForScheduledSync(db) {
 async function getLeagueById(db, leagueId) {
   const row = await db.prepare("SELECT * FROM leagues WHERE id = ?1").bind(leagueId).first();
   return row ? normalizeLeague(row) : null;
+}
+
+async function getSharedCompetitionSnapshot(db, competitionCode, season) {
+  const responses = await db.batch([
+    db.prepare(
+      `SELECT COUNT(*) AS count, MAX(last_synced_at) AS lastSyncedAt
+         FROM shared_matches
+        WHERE competition_code = ?1 AND season = ?2`,
+    ).bind(competitionCode, season),
+    db.prepare(
+      `SELECT COUNT(*) AS count, MAX(last_synced_at) AS lastSyncedAt
+         FROM shared_standings
+        WHERE competition_code = ?1 AND season = ?2`,
+    ).bind(competitionCode, season),
+  ]);
+  const matches = responses[0]?.results?.[0] || {};
+  const standings = responses[1]?.results?.[0] || {};
+  const lastSyncedAt = [matches.lastSyncedAt, standings.lastSyncedAt].filter(Boolean).sort().at(-1) || new Date().toISOString();
+  return {
+    matchesCount: Number(matches.count || 0),
+    standingsCount: Number(standings.count || 0),
+    lastSyncedAt,
+  };
 }
 
 async function ensureLeagueAccess(db, user, leagueId) {
@@ -2688,7 +3145,7 @@ function mapLeagueUsers(rows) {
 }
 
 function mapLeagueMatches(rows) {
-  return rows.map((row) => ({
+  return attachDerivedMatchGroupLabels(rows.map((row) => ({
     id: row.id,
     leagueId: row.league_id,
     sourceMatchId: Number(row.source_match_id),
@@ -2697,14 +3154,113 @@ function mapLeagueMatches(rows) {
     season: Number(row.season),
     utcDate: row.utc_date,
     stage: row.stage || "Sin fase",
+    groupLabel: row.group_label || "",
+    subgroupLabel: row.group_label || "",
     status: row.status,
     homeTeam: row.home_team,
     awayTeam: row.away_team,
     scoreHome: toNullableNumber(row.score_home),
     scoreAway: toNullableNumber(row.score_away),
+    scoreRegularHome: toNullableNumber(row.score_regular_home ?? row.score_home),
+    scoreRegularAway: toNullableNumber(row.score_regular_away ?? row.score_away),
+    scoreFullHome: toNullableNumber(row.score_full_home ?? row.score_home),
+    scoreFullAway: toNullableNumber(row.score_full_away ?? row.score_away),
+    scorePenaltyHome: toNullableNumber(row.score_penalty_home),
+    scorePenaltyAway: toNullableNumber(row.score_penalty_away),
+    scoreDuration: row.score_duration || null,
+    scoreWinner: row.score_winner || null,
+    scoreSource: row.score_source || "api",
+    manualScoreUpdatedAt: row.manual_score_updated_at || null,
     matchday: toNullableNumber(row.matchday),
     lastSyncedAt: row.last_synced_at,
-  }));
+  })));
+}
+
+function attachDerivedMatchGroupLabels(matches) {
+  const groupStageMatches = matches.filter((match) => normalizeLookupKey(match.stage) === "fase de grupos");
+  if (!groupStageMatches.length) return matches;
+
+  const parent = new Map();
+  const rank = new Map();
+  const labelsByRoot = new Map();
+
+  const ensure = (team) => {
+    if (!team || parent.has(team)) return;
+    parent.set(team, team);
+    rank.set(team, 0);
+  };
+  const find = (team) => {
+    let root = team;
+    while (parent.get(root) !== root) root = parent.get(root);
+    let cursor = team;
+    while (parent.get(cursor) !== cursor) {
+      const next = parent.get(cursor);
+      parent.set(cursor, root);
+      cursor = next;
+    }
+    return root;
+  };
+  const unite = (left, right) => {
+    ensure(left);
+    ensure(right);
+    let leftRoot = find(left);
+    let rightRoot = find(right);
+    if (leftRoot === rightRoot) return;
+    const leftRank = rank.get(leftRoot) || 0;
+    const rightRank = rank.get(rightRoot) || 0;
+    if (leftRank < rightRank) {
+      [leftRoot, rightRoot] = [rightRoot, leftRoot];
+    }
+    parent.set(rightRoot, leftRoot);
+    if (leftRank === rightRank) rank.set(leftRoot, leftRank + 1);
+  };
+
+  groupStageMatches.forEach((match) => {
+    const home = normalizeLookupKey(match.homeTeam);
+    const away = normalizeLookupKey(match.awayTeam);
+    if (home && away) unite(home, away);
+  });
+
+  const components = new Map();
+  groupStageMatches.forEach((match) => {
+    const home = normalizeLookupKey(match.homeTeam);
+    if (!home || !parent.has(home)) return;
+    const root = find(home);
+    const entry = components.get(root) || {
+      matches: [],
+      firstDate: match.utcDate || "",
+      firstSourceMatchId: Number(match.sourceMatchId || Number.MAX_SAFE_INTEGER),
+    };
+    entry.matches.push(match);
+    if ((match.utcDate || "") < entry.firstDate) entry.firstDate = match.utcDate || "";
+    entry.firstSourceMatchId = Math.min(entry.firstSourceMatchId, Number(match.sourceMatchId || Number.MAX_SAFE_INTEGER));
+    if (match.groupLabel) labelsByRoot.set(root, match.groupLabel);
+    components.set(root, entry);
+  });
+
+  const labelsByMatchId = new Map();
+  [...components.entries()]
+    .sort(([, left], [, right]) => (
+      String(left.firstDate).localeCompare(String(right.firstDate)) ||
+      left.firstSourceMatchId - right.firstSourceMatchId
+    ))
+    .forEach(([root, component], index) => {
+      const label = labelsByRoot.get(root) || buildAlphabeticGroupLabel(index);
+      component.matches.forEach((match) => labelsByMatchId.set(match.id, label));
+    });
+
+  return matches.map((match) => {
+    const subgroupLabel = match.groupLabel || labelsByMatchId.get(match.id) || "";
+    return subgroupLabel
+      ? { ...match, groupLabel: subgroupLabel, subgroupLabel }
+      : match;
+  });
+}
+
+function buildAlphabeticGroupLabel(index) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (index < alphabet.length) return `Grupo ${alphabet[index]}`;
+  return `Grupo ${index + 1}`;
 }
 
 function mapLeagueStandings(rows) {
@@ -2791,9 +3347,13 @@ async function getCompetitions(env) {
     if (cached) return cached;
   }
   if (!env.FOOTBALL_DATA_API_TOKEN) return FALLBACK_COMPETITIONS;
-  const response = await fetch(`${API_BASE}/competitions`, {
+  const response = await fetchWithTimeout(`${API_BASE}/competitions`, {
     headers: { "X-Auth-Token": env.FOOTBALL_DATA_API_TOKEN },
+  }, 4_000).catch((error) => {
+    console.warn("[football-data] No se pudo cargar competiciones, usando fallback.", error);
+    return null;
   });
+  if (!response) return FALLBACK_COMPETITIONS;
   const payload = await safeJson(response);
   if (!response.ok) return FALLBACK_COMPETITIONS;
   const competitions = Array.isArray(payload?.competitions) ? payload.competitions : [];
@@ -2827,16 +3387,24 @@ async function getCompetitions(env) {
 async function fetchCompetitionResource(token, candidateKeys, resource, season, allowEmpty = false) {
   let lastError = null;
   for (const key of candidateKeys) {
-    const withSeason = await fetch(`${API_BASE}/competitions/${key}/${resource}?season=${season}`, {
+    const withSeason = await fetchWithTimeout(`${API_BASE}/competitions/${key}/${resource}?season=${season}`, {
       headers: { "X-Auth-Token": token },
+    }).catch((error) => {
+      lastError = error;
+      return null;
     });
+    if (!withSeason) continue;
     const payload = await safeJson(withSeason);
     if (withSeason.ok) return payload;
 
     if (withSeason.status === 404) {
-      const fallback = await fetch(`${API_BASE}/competitions/${key}/${resource}`, {
+      const fallback = await fetchWithTimeout(`${API_BASE}/competitions/${key}/${resource}`, {
         headers: { "X-Auth-Token": token },
+      }).catch((error) => {
+        lastError = error;
+        return null;
       });
+      if (!fallback) continue;
       const fallbackPayload = await safeJson(fallback);
       if (fallback.ok) return fallbackPayload;
       lastError = fallbackPayload;
@@ -2850,8 +3418,24 @@ async function fetchCompetitionResource(token, candidateKeys, resource, season, 
   throw httpError(lastError?.message || lastError?.error || `No se pudo cargar ${resource}.`, 502);
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = FOOTBALL_DATA_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function normalizeMatch(raw, leagueId, competitionCode, competitionName, season, syncedAt) {
   if (!raw?.id || !raw?.utcDate) return null;
+  const regularHome = toNullableNumber(raw.score?.regularTime?.home ?? raw.score?.regularTime?.homeTeam);
+  const regularAway = toNullableNumber(raw.score?.regularTime?.away ?? raw.score?.regularTime?.awayTeam);
+  const fullHome = toNullableNumber(raw.score?.fullTime?.home ?? raw.score?.fullTime?.homeTeam);
+  const fullAway = toNullableNumber(raw.score?.fullTime?.away ?? raw.score?.fullTime?.awayTeam);
+  const penaltyHome = toNullableNumber(raw.score?.penalties?.home ?? raw.score?.penalties?.homeTeam);
+  const penaltyAway = toNullableNumber(raw.score?.penalties?.away ?? raw.score?.penalties?.awayTeam);
   return {
     id: buildSharedMatchId(competitionCode, season, raw.id),
     leagueId,
@@ -2861,23 +3445,44 @@ function normalizeMatch(raw, leagueId, competitionCode, competitionName, season,
     season: Number(season),
     utcDate: raw.utcDate,
     stage: translateStage(raw.stage || raw.group || ""),
+    groupLabel: normalizeMatchGroupLabel(raw),
     status: raw.status || "SCHEDULED",
     homeTeam: raw.homeTeam?.name || "Local",
     awayTeam: raw.awayTeam?.name || "Visitante",
-    scoreHome: toNullableNumber(raw.score?.fullTime?.home ?? raw.score?.fullTime?.homeTeam),
-    scoreAway: toNullableNumber(raw.score?.fullTime?.away ?? raw.score?.fullTime?.awayTeam),
+    scoreHome: fullHome ?? regularHome,
+    scoreAway: fullAway ?? regularAway,
+    scoreRegularHome: regularHome,
+    scoreRegularAway: regularAway,
+    scoreFullHome: fullHome,
+    scoreFullAway: fullAway,
+    scorePenaltyHome: penaltyHome,
+    scorePenaltyAway: penaltyAway,
+    scoreDuration: raw.score?.duration || null,
+    scoreWinner: raw.score?.winner || null,
     matchday: toNullableNumber(raw.matchday),
     lastSyncedAt: syncedAt,
   };
 }
 
-function normalizeStandings(standings, competitionCode, competitionName, season, syncedAt) {
+function normalizeStandings(standings, competitionCode, competitionName, season, syncedAt, rawMatches = []) {
+  const matchGroups = buildTeamGroupsFromMatches(rawMatches);
+  const shouldPreferGroupedTotals = matchGroups.length > 1 && standings.some((entry) => (
+    String(entry?.stage || "").toUpperCase() === "GROUP_STAGE" &&
+    String(entry?.type || "TOTAL").toUpperCase() === "TOTAL" &&
+    !entry?.group &&
+    Array.isArray(entry?.table) &&
+    entry.table.length > 8
+  ));
+
   return standings
-    .map((entry) => {
+    .flatMap((entry) => {
+      const type = String(entry?.type || "TOTAL").toUpperCase();
+      if (shouldPreferGroupedTotals && !entry?.group && type !== "TOTAL") return null;
       const rows = Array.isArray(entry?.table)
         ? entry.table.map((row) => ({
             position: row.position ?? "-",
             team: row.team?.shortName || row.team?.tla || row.team?.name || "Equipo",
+            teamAliases: buildTeamAliases(row.team),
             playedGames: row.playedGames ?? 0,
             won: row.won ?? 0,
             draw: row.draw ?? 0,
@@ -2889,6 +3494,15 @@ function normalizeStandings(standings, competitionCode, competitionName, season,
           }))
         : [];
       if (!rows.length) return null;
+      const groupedTables = buildGroupedStandingsFromMatches(entry, rows, matchGroups);
+      if (groupedTables.length) return groupedTables.map((group) => ({
+        competitionCode,
+        competitionName,
+        season: Number(season),
+        label: `${group.label} · ${translateStandingType(entry.type) || "General"}`,
+        rows: group.rows,
+        lastSyncedAt: syncedAt,
+      }));
       const label = [translateStage(entry.group), translateStage(entry.stage), translateStandingType(entry.type)]
         .filter(Boolean)
         .filter((value, index, array) => array.indexOf(value) === index)
@@ -2898,15 +3512,74 @@ function normalizeStandings(standings, competitionCode, competitionName, season,
         competitionName,
         season: Number(season),
         label: label || "Tabla general",
-        rows,
+        rows: rows.map(stripStandingInternalFields),
         lastSyncedAt: syncedAt,
       };
     })
     .filter(Boolean);
 }
 
+function buildGroupedStandingsFromMatches(entry, rows, groups) {
+  const stage = String(entry?.stage || "").toUpperCase();
+  const type = String(entry?.type || "TOTAL").toUpperCase();
+  if (entry?.group || stage !== "GROUP_STAGE" || type !== "TOTAL" || rows.length <= 8) return [];
+  if (groups.length <= 1) return [];
+
+  return groups
+    .map((group) => {
+      const groupRows = rows.filter((row) => row.teamAliases.some((alias) => group.teams.has(alias)));
+      if (!groupRows.length) return null;
+      const hasPlayedGames = groupRows.some((row) => Number(row.playedGames || 0) > 0);
+      const orderedRows = hasPlayedGames
+        ? [...groupRows].sort(compareStandingRows)
+        : groupRows;
+      return {
+        label: group.label,
+        rows: orderedRows.map((row, index) => ({
+          ...stripStandingInternalFields(row),
+          position: index + 1,
+        })),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildTeamGroupsFromMatches(rawMatches) {
+  const groups = new Map();
+  rawMatches.forEach((match) => {
+    const label = normalizeMatchGroupLabel(match);
+    if (!label) return;
+    const entry = groups.get(label) || { label, teams: new Set() };
+    [match?.homeTeam, match?.awayTeam].forEach((team) => {
+      buildTeamAliases(team).forEach((alias) => entry.teams.add(alias));
+    });
+    groups.set(label, entry);
+  });
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, "es"));
+}
+
+function buildTeamAliases(team) {
+  return [team?.name, team?.shortName, team?.tla]
+    .map((value) => normalizeLookupKey(value))
+    .filter(Boolean);
+}
+
+function stripStandingInternalFields(row) {
+  const { teamAliases, ...publicRow } = row;
+  return publicRow;
+}
+
+function compareStandingRows(left, right) {
+  return Number(right.points || 0) - Number(left.points || 0) ||
+    Number(right.goalDifference || 0) - Number(left.goalDifference || 0) ||
+    Number(right.goalsFor || 0) - Number(left.goalsFor || 0) ||
+    String(left.team || "").localeCompare(String(right.team || ""), "es");
+}
+
 function buildLeaderboard(members, matches, predictions, league) {
   const matchesById = new Map(matches.map((match) => [match.id, match]));
+  const finalMatch = findFinalMatch(matches);
+  const finalMatchFinished = Boolean(finalMatch && isFinished(finalMatch));
   const predictionsByUser = new Map();
   predictions.forEach((prediction) => {
     const userPredictions = predictionsByUser.get(prediction.userId) || [];
@@ -2920,13 +3593,20 @@ function buildLeaderboard(members, matches, predictions, league) {
       let points = 0;
       let exactHits = 0;
       let trendHits = 0;
+      let finalMatchPoints = 0;
       ownPredictions.forEach((prediction) => {
         const match = matchesById.get(prediction.matchId);
         if (!match) return;
         const score = pointsForPrediction(prediction, match, league);
         points += score;
-        if (score === league.exactPoints) exactHits += 1;
-        if (score === league.outcomePoints) trendHits += 1;
+        if (predictionHasExactScore(prediction, match)) {
+          exactHits += 1;
+        } else if (predictionHasCorrectOutcome(prediction, match)) {
+          trendHits += 1;
+        }
+        if (finalMatch && prediction.matchId === finalMatch.id) {
+          finalMatchPoints = score;
+        }
       });
       return {
         userId: member.id,
@@ -2934,6 +3614,14 @@ function buildLeaderboard(members, matches, predictions, league) {
         predictionsCount: ownPredictions.length,
         exactHits,
         trendHits,
+        finalMatchPoints,
+        technicalTieKey: [
+          points,
+          exactHits,
+          trendHits,
+          ownPredictions.length,
+          finalMatchPoints,
+        ].join("|"),
         points,
       };
     })
@@ -2942,8 +3630,23 @@ function buildLeaderboard(members, matches, predictions, league) {
         right.points - left.points ||
         right.exactHits - left.exactHits ||
         right.trendHits - left.trendHits ||
+        right.predictionsCount - left.predictionsCount ||
+        right.finalMatchPoints - left.finalMatchPoints ||
         left.displayName.localeCompare(right.displayName),
-    );
+    )
+    .map((entry, index, ordered) => {
+      const hasPreviousTie = index > 0 && ordered[index - 1].technicalTieKey === entry.technicalTieKey;
+      const hasNextTie = index < ordered.length - 1 && ordered[index + 1].technicalTieKey === entry.technicalTieKey;
+      const previousRank = hasPreviousTie ? ordered[index - 1].rank || index : index + 1;
+      const rank = finalMatchFinished && hasPreviousTie ? previousRank : index + 1;
+      entry.rank = rank;
+      return {
+        ...entry,
+        rank,
+        finalMatchFinished,
+        technicalTie: finalMatchFinished && (hasPreviousTie || hasNextTie),
+      };
+    });
 }
 
 function pointsForPrediction(prediction, match, league) {
@@ -2955,6 +3658,46 @@ function pointsForPrediction(prediction, match, league) {
   return Math.sign(prediction.homeGoals - prediction.awayGoals) === Math.sign(match.scoreHome - match.scoreAway)
     ? league.outcomePoints
     : 0;
+}
+
+function predictionHasCorrectOutcome(prediction, match) {
+  if (!isFinished(match)) return false;
+  if (match.scoreHome == null || match.scoreAway == null) return false;
+  return Math.sign(prediction.homeGoals - prediction.awayGoals) === Math.sign(match.scoreHome - match.scoreAway);
+}
+
+function predictionHasExactScore(prediction, match) {
+  if (!isFinished(match)) return false;
+  if (match.scoreHome == null || match.scoreAway == null) return false;
+  return prediction.homeGoals === match.scoreHome && prediction.awayGoals === match.scoreAway;
+}
+
+function findFinalMatch(matches) {
+  const finalMatches = matches
+    .filter((match) => normalizeLookupKey(match.stage) === "final")
+    .sort((left, right) => new Date(right.utcDate || right.utc_date || 0) - new Date(left.utcDate || left.utc_date || 0));
+  return finalMatches[0] || null;
+}
+
+function applyLeagueScoreMode(match, league) {
+  const useFullTime = league?.scoreMode === "full_time";
+  const hasPenalties = match.scorePenaltyHome != null && match.scorePenaltyAway != null;
+  const penaltyHome = hasPenalties ? match.scorePenaltyHome : 0;
+  const penaltyAway = hasPenalties ? match.scorePenaltyAway : 0;
+  const finalHome = hasPenalties && match.scoreFullHome != null ? match.scoreFullHome + penaltyHome : match.scoreFullHome;
+  const finalAway = hasPenalties && match.scoreFullAway != null ? match.scoreFullAway + penaltyAway : match.scoreFullAway;
+  const scoreHome = useFullTime
+    ? finalHome ?? match.scoreFullHome ?? match.scoreHome ?? match.scoreRegularHome
+    : match.scoreRegularHome ?? match.scoreHome ?? match.scoreFullHome;
+  const scoreAway = useFullTime
+    ? finalAway ?? match.scoreFullAway ?? match.scoreAway ?? match.scoreRegularAway
+    : match.scoreRegularAway ?? match.scoreAway ?? match.scoreFullAway;
+  return {
+    ...match,
+    scoreHome,
+    scoreAway,
+    scoreMode: useFullTime ? "full_time" : "regular_time",
+  };
 }
 
 function decorateMatch(match, league) {
@@ -3101,6 +3844,7 @@ function normalizeLeague(row) {
     exactPoints: Number(row.exact_points),
     outcomePoints: Number(row.outcome_points),
     lockMinutes: Number(row.lock_minutes),
+    scoreMode: normalizeScoreMode(row.score_mode),
     lastSyncAt: row.last_sync_at || null,
     isActive: Number(row.is_active) === 1,
   };
@@ -3112,6 +3856,10 @@ function normalizeOrganization(row) {
     name: row.name,
     slug: row.slug,
     isActive: Number(row.is_active) === 1,
+    logoObjectKey: row.logo_object_key || null,
+    logoContentType: row.logo_content_type || null,
+    logoOriginalName: row.logo_original_name || "",
+    logoUpdatedAt: row.logo_updated_at || null,
     adminCount: Number(row.admin_count || 0),
     userCount: Number(row.user_count || 0),
     leagueCount: Number(row.league_count || 0),
@@ -3128,6 +3876,7 @@ function validateLeaguePayload(payload) {
     exactPoints: normalizePositiveInteger(payload?.exactPoints, "Los puntos exactos son obligatorios."),
     outcomePoints: normalizeNonNegativeInteger(payload?.outcomePoints, "Los puntos por tendencia son obligatorios."),
     lockMinutes: normalizeNonNegativeInteger(payload?.lockMinutes, "Los minutos de cierre son obligatorios."),
+    scoreMode: normalizeScoreMode(payload?.scoreMode),
     isActive: payload?.isActive == null ? true : Boolean(payload.isActive),
   };
 }
@@ -3146,12 +3895,21 @@ function validatePartialLeaguePayload(payload) {
   if (payload?.lockMinutes != null) {
     next.lockMinutes = normalizeNonNegativeInteger(payload.lockMinutes, "Minutos inválidos.");
   }
+  if (payload?.scoreMode != null) next.scoreMode = normalizeScoreMode(payload.scoreMode);
   if (payload?.isActive != null) next.isActive = Boolean(payload.isActive);
   return next;
 }
 
+function normalizeScoreMode(value) {
+  const mode = String(value || "regular_time").trim().toLowerCase();
+  if (mode === "full_time") return "full_time";
+  if (mode === "regular_time") return "regular_time";
+  throw httpError("Modo de marcador inválido.", 400);
+}
+
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
+  if (email.length > 254) throw httpError("Correo inválido.", 400);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw httpError("Correo inválido.", 400);
   return email;
 }
@@ -3311,12 +4069,37 @@ function generateTemporaryPassword() {
   return `Tmp${Math.random().toString(36).slice(-4)}${Math.random().toString(36).slice(-4).toUpperCase()}9!`;
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = MAX_JSON_BODY_BYTES) {
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  if (contentLength > maxBytes) throw httpError("La solicitud es demasiado grande.", 413);
   try {
     return await request.json();
   } catch {
     throw httpError("JSON inválido.", 400);
   }
+}
+
+function normalizeOrganizationLogoType(value) {
+  const contentType = String(value || "").split(";")[0].trim().toLowerCase();
+  if (!ORGANIZATION_LOGO_TYPES.has(contentType)) {
+    throw httpError("Formato no permitido. Usa PNG, WebP, JPG o SVG.", 400);
+  }
+  return contentType;
+}
+
+function decodeBase64Image(value) {
+  const raw = String(value || "");
+  const base64 = raw.includes(",") ? raw.split(",").pop() : raw;
+  if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) {
+    throw httpError("Imagen inválida.", 400);
+  }
+  const normalized = base64.replace(/\s/g, "");
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 async function safeJson(response) {
@@ -3545,6 +4328,66 @@ async function cachePutJson(cache, key, body, ttlSeconds) {
   } catch (error) {
     console.warn("[cache] No se pudo escribir cache", key, error);
   }
+}
+
+async function buildLoginRateLimitIdentity(request, rawEmail) {
+  const ip = getClientIp(request);
+  const email = String(rawEmail || "").trim().toLowerCase().slice(0, 254);
+  const digest = await sha256Hex(`${ip}|${email}`);
+  return { key: `security:login:${digest}` };
+}
+
+async function assertLoginAllowed(env, identity) {
+  if (!env.APP_CACHE) return;
+  const state = await cacheGetJson(env.APP_CACHE, identity.key);
+  const now = Date.now();
+  if (Number(state?.lockedUntil || 0) > now) {
+    throw httpError("Demasiados intentos fallidos. Intenta de nuevo en unos minutos.", 429);
+  }
+}
+
+async function recordFailedLogin(env, identity) {
+  if (!env.APP_CACHE) return;
+  const now = Date.now();
+  const state = await cacheGetJson(env.APP_CACHE, identity.key);
+  const windowStartedAt = Number(state?.windowStartedAt || 0);
+  const sameWindow = windowStartedAt && now - windowStartedAt < LOGIN_RATE_LIMIT_WINDOW_SECONDS * 1000;
+  const attempts = sameWindow ? Number(state?.attempts || 0) + 1 : 1;
+  const lockedUntil = attempts >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS
+    ? now + LOGIN_RATE_LIMIT_LOCK_SECONDS * 1000
+    : 0;
+  await cachePutJson(
+    env.APP_CACHE,
+    identity.key,
+    {
+      attempts,
+      windowStartedAt: sameWindow ? windowStartedAt : now,
+      lockedUntil,
+    },
+    Math.max(LOGIN_RATE_LIMIT_WINDOW_SECONDS, LOGIN_RATE_LIMIT_LOCK_SECONDS) + 60,
+  );
+}
+
+async function clearSuccessfulLogin(env, identity) {
+  if (!env.APP_CACHE) return;
+  try {
+    await env.APP_CACHE.delete(identity.key);
+  } catch (error) {
+    console.warn("[security] No se pudo limpiar el contador de login", error);
+  }
+}
+
+function getClientIp(request) {
+  return (
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return bytesToHex(new Uint8Array(digest));
 }
 
 async function runWithTransientRetry(operation, options = {}) {
